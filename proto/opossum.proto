@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package Opossum;
+
+option go_package = "github.com/cestlascorpion/Opossum;opossum";
+
+service opossum {
+  rpc GetSegment (GetSegmentIdReq) returns (GetSegmentIdResp) {}
+  rpc GetSnowflake (GetSnowflakeIdReq) returns (GetSnowflakeIdResp) {}
+  rpc DecodeSnowflake(DecodeSnowflakeIdReq) returns (DecodeSnowflakeIdResp) {}
+}
+
+message GetSegmentIdReq {
+  string key = 1;
+}
+
+message GetSegmentIdResp {
+  int64 id = 1;
+}
+
+message GetSnowflakeIdReq {
+  string key = 1;
+}
+
+message GetSnowflakeIdResp {
+  int64 id = 1;
+}
+
+message DecodeSnowflakeIdReq {
+  int64 id = 1;
+}
+
+message DecodeSnowflakeIdResp {
+  string content = 1;
+}

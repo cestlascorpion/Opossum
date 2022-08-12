@@ -229,7 +229,6 @@ func (e *EtcdHolder) updateNewData(ctx context.Context, cli *clientv3.Client, pa
 		log.Errorf("put err %+v", err)
 		return err
 	}
-	log.Debugf("update new data %s", string(bs))
 	return nil
 }
 

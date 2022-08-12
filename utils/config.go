@@ -1,50 +1,53 @@
 package utils
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
-type SegmentConfig struct {
+type SgConf struct {
 	Table    string `json:"table,omitempty"`
 	MaxStep  int64  `json:"max_step,omitempty"`
 	Duration int64  `json:"duration,omitempty"`
 }
 
-type SnowflakeConfig struct {
-	Table         string       `json:"table,omitempty"`
-	Ethernet      string       `json:"ethernet,omitempty"`
-	Addr          string       `json:"addr,omitempty"`
-	Port          int16        `json:"port,omitempty"`
-	EtcdEndpoints string       `json:"etcd_endpoints,omitempty"`
-	Mysql         *MySQLConfig `json:"mysql,omitempty"`
+type SnConf struct {
+	Table     string `json:"table,omitempty"`
+	Ethernet  string `json:"ethernet,omitempty"`
+	Addr      string `json:"addr,omitempty"`
+	Port      int16  `json:"port,omitempty"`
+	Endpoints string `json:"endpoints,omitempty"`
+	Mysql     *DB    `json:"mysql,omitempty"`
 }
 
-type MySQLConfig struct {
+type DB struct {
 	Host     string `json:"host,omitempty"`
 	Port     int    `json:"port,omitempty"`
 	Protocol string `json:"protocol,omitempty"`
 	Database string `json:"database,omitempty"`
-	UserName string `json:"user_name,omitempty"`
+	UserName string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
 	Charset  string `json:"charset,omitempty"`
 }
 
-type OpossumConfig struct {
-	Segment   *SegmentConfig
-	Snowflake *SnowflakeConfig
+type Config struct {
+	Segment   *SgConf `json:"segment,omitempty"`
+	Snowflake *SnConf ` json:"snowflake,omitempty"`
 }
 
-func NewOpossumConfigForMock() (*OpossumConfig, error) {
-	return &OpossumConfig{
-		Segment: &SegmentConfig{
+func NewConfigForTest() (*Config, error) {
+	return &Config{
+		Segment: &SgConf{
 			Table:    "for_test",
 			MaxStep:  1000000,
 			Duration: 15 * 60 * 1000,
 		},
-		Snowflake: &SnowflakeConfig{
-			Table:         "for_test",
-			Ethernet:      "eno1",
-			Port:          9090,
-			EtcdEndpoints: "127.0.0.1:2379",
-			Mysql: &MySQLConfig{
+		Snowflake: &SnConf{
+			Table:     "for_test",
+			Ethernet:  "eno1",
+			Port:      9090,
+			Endpoints: "127.0.0.1:2379",
+			Mysql: &DB{
 				Host:     "localhost",
 				Port:     3306,
 				Protocol: "tcp",
@@ -57,7 +60,7 @@ func NewOpossumConfigForMock() (*OpossumConfig, error) {
 	}, nil
 }
 
-func (o *OpossumConfig) MySQLSourceName() string {
+func (o *Config) MySQLSourceName() string {
 	mysql := o.Snowflake.Mysql
 	return fmt.Sprintf("%s:%s@%s(%s:%d)/%s?charset=%s&parseTime=true&loc=Local",
 		mysql.UserName,
@@ -67,4 +70,12 @@ func (o *OpossumConfig) MySQLSourceName() string {
 		mysql.Port,
 		mysql.Database,
 		mysql.Charset)
+}
+
+func (o *Config) String() string {
+	bs, err := json.Marshal(o)
+	if err != nil {
+		return ""
+	}
+	return string(bs)
 }

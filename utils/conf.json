@@ -1,0 +1,22 @@
+{
+    "segment": {
+        "table": "for_test",
+        "max_step": 1000000,
+        "duration": 900000
+    },
+    "snowflake": {
+        "table": "for_test",
+        "ethernet": "eno1",
+        "port": 9090,
+        "endpoints": "127.0.0.1:2379",
+        "mysql": {
+            "host":"localhost",
+            "port":3306,
+            "protocol":"tcp",
+            "database":"leaf",
+            "username":"hans",
+            "password":"123456",
+            "charset":"utf8"
+        }
+    }
+}

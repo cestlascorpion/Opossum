@@ -24,7 +24,7 @@ type Snowflake struct {
 	mutex    sync.Mutex
 }
 
-func NewSnowflake(ctx context.Context, conf *utils.OpossumConfig) (*Snowflake, error) {
+func NewSnowflake(ctx context.Context, conf *utils.Config) (*Snowflake, error) {
 	table := conf.Snowflake.Table
 	if len(table) == 0 {
 		return nil, errors.New(utils.ErrInvalidParameter)
@@ -36,7 +36,7 @@ func NewSnowflake(ctx context.Context, conf *utils.OpossumConfig) (*Snowflake, e
 		return nil, errors.New(utils.ErrInvalidParameter)
 	}
 
-	endpoints := strings.Split(conf.Snowflake.EtcdEndpoints, ",")
+	endpoints := strings.Split(conf.Snowflake.Endpoints, ",")
 	if len(endpoints) == 0 {
 		log.Errorf("invalid etcd endpoints")
 		return nil, errors.New(utils.ErrInvalidParameter)
@@ -124,7 +124,7 @@ const (
 	sequenceMask       = int64(^(-1 << sequenceBits))
 )
 
-func checkAddress(conf *utils.OpossumConfig) (string, string, bool) {
+func checkAddress(conf *utils.Config) (string, string, bool) {
 	if len(conf.Snowflake.Addr) == 0 {
 		conf.Snowflake.Addr = getHostAddress(conf.Snowflake.Ethernet)
 	}

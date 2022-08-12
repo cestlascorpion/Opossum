@@ -14,13 +14,15 @@ import (
 )
 
 func main() {
+	log.SetLevel(log.DebugLevel)
+
 	lis, err := net.Listen("tcp", utils.ServerAddr)
 	if err != nil {
 		log.Fatalf("listen failed err %+v", err)
 		return
 	}
-	conf := &utils.OpossumConfig{}
-	err = configor.Load(conf, "conf.json")
+	conf := &utils.Config{}
+	err = configor.Load(conf, "./conf.json")
 	if err != nil {
 		log.Fatalf("config failed err %+v", err)
 		return

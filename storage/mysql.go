@@ -20,7 +20,7 @@ type MySQL struct {
 	cancel context.CancelFunc
 }
 
-func NewMySQL(ctx context.Context, conf *utils.OpossumConfig) (*MySQL, error) {
+func NewMySQL(ctx context.Context, conf *utils.Config) (*MySQL, error) {
 	table := conf.Segment.Table
 	if len(table) == 0 {
 		return nil, errors.New(utils.ErrInvalidParameter)

@@ -17,7 +17,7 @@ var snowflakeBench *Snowflake
 func init() {
 	log.SetLevel(log.DebugLevel)
 
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -53,7 +53,7 @@ func Test_TilNextMillis(t *testing.T) {
 }
 
 func TestSnowflake_GetSnowflakeId(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -79,7 +79,7 @@ func TestSnowflake_GetSnowflakeId(t *testing.T) {
 }
 
 func TestSnowflake_GetSnowflakeId2(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -135,7 +135,7 @@ func BenchmarkNewSnowflake(b *testing.B) {
 }
 
 func TestSnowflake_DecodeSnowflakeId(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()

@@ -14,7 +14,7 @@ var bench *MySQL
 func init() {
 	log.SetLevel(log.DebugLevel)
 
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -26,7 +26,7 @@ func init() {
 }
 
 func TestMySQL_GetAllLeafAllocs(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -65,7 +65,7 @@ func BenchmarkMySQL_GetAllLeafAllocs(b *testing.B) {
 }
 
 func TestMySQL_UpdateMaxIdAndGetLeafAlloc(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -102,7 +102,7 @@ func BenchmarkMySQL_UpdateMaxIdAndGetLeafAlloc(b *testing.B) {
 }
 
 func TestMySQL_UpdateMaxIdByCustomStepAndGetLeafAlloc(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -136,7 +136,7 @@ func BenchmarkMySQL_UpdateMaxIdByCustomStepAndGetLeafAlloc(b *testing.B) {
 }
 
 func TestMySQL_GetAllTag(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()

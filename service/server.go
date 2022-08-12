@@ -13,7 +13,7 @@ type Server struct {
 	snowflake *Snowflake
 }
 
-func NewServer(ctx context.Context, conf *utils.OpossumConfig) (*Server, error) {
+func NewServer(ctx context.Context, conf *utils.Config) (*Server, error) {
 	log.Debugf("conf %+v", conf)
 
 	sg, err := NewSegment(ctx, conf)

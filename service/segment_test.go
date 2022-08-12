@@ -17,7 +17,7 @@ var segmentBench *Segment
 func init() {
 	log.SetLevel(log.DebugLevel)
 
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -29,7 +29,7 @@ func init() {
 }
 
 func TestSegment_GetSegmentId(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -55,7 +55,7 @@ func TestSegment_GetSegmentId(t *testing.T) {
 }
 
 func TestSegment_GetSegmentId2(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()

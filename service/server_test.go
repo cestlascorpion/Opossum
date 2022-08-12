@@ -15,7 +15,7 @@ var bench *Server
 func init() {
 	log.SetLevel(log.InfoLevel)
 
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -27,7 +27,7 @@ func init() {
 }
 
 func TestServer_Segment(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -50,7 +50,7 @@ func TestServer_Segment(t *testing.T) {
 }
 
 func TestServer_Snowflake(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -61,7 +61,7 @@ func TestServer_Snowflake(t *testing.T) {
 		t.FailNow()
 	}
 	defer svr.Close(context.Background())
-	
+
 	resp, err := svr.GetSnowflake(context.Background(), &pb.GetSnowflakeIdReq{
 		Key: "test_key",
 	})
@@ -103,7 +103,7 @@ func BenchmarkServer_Snowflake(b *testing.B) {
 }
 
 func TestServer_DecodeSnowflake(t *testing.T) {
-	conf, err := utils.NewOpossumConfigForMock()
+	conf, err := utils.NewConfigForTest()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()

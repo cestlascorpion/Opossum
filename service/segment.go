@@ -21,7 +21,7 @@ type Segment struct {
 	sg       singleflight.Group // `synchronized`
 }
 
-func NewSegment(ctx context.Context, conf *utils.OpossumConfig) (*Segment, error) {
+func NewSegment(ctx context.Context, conf *utils.Config) (*Segment, error) {
 	step := conf.Segment.MaxStep
 	if step > maxDefaultStep || step < minDefaultStep {
 		step = maxDefaultStep

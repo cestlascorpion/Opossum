@@ -35,26 +35,33 @@ func NewEtcdHolder(ctx context.Context, ip, port string, endpoints []string, tab
 		addr:      fmt.Sprintf("%s:%s", ip, port),
 		maxId:     maxId,
 		path: &etcdPath{
+			LockPath:    fmt.Sprintf(etcdLockerPath, table),
 			ForeverPath: fmt.Sprintf(etcdForeverPath, table),
 		},
 	}
 
-	var err error
-	for i := 0; i < maxRetryCount; i++ {
-		err = e.initWorkerId(ctx)
-		if err != nil {
-			log.Errorf("init worker id err %d", err)
-			time.Sleep(time.Second)
-		} else {
-			break
-		}
+	locker, err := NewLocker(ctx, e.path.LockPath, endpoints)
+	if err != nil {
+		log.Errorf("new locker err %+v", err)
+		return nil, err
 	}
+
+	err = locker.Lock(ctx)
+	if err != nil {
+		log.Errorf("locker lock err %+v", err)
+		return nil, err
+	}
+	defer func() {
+		_ = locker.UnLock(ctx)
+	}()
+
+	err = e.initWorkerId(ctx)
 	if err != nil {
 		log.Errorf("init worker id err %+v", err)
 		return nil, err
 	}
 
-	log.Infof("new etcd holed ok %+v", e)
+	log.Infof("new etcd holder ok %+v", e)
 	return e, nil
 }
 
@@ -70,13 +77,14 @@ func (e *EtcdHolder) Close(ctx context.Context) error {
 // ---------------------------------------------------------------------------------------------------------------------
 
 const (
+	etcdLockerPath  = "/snowflake/%s/locker"
 	etcdForeverPath = "/snowflake/%s/forever"
-	maxRetryCount   = 3
 	dialTimeout     = time.Second * 10
 	updateInterval  = time.Second * 3
 )
 
 type etcdPath struct {
+	LockPath    string
 	ForeverPath string
 }
 

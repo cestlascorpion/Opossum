@@ -8,10 +8,10 @@ require (
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/sirupsen/logrus v1.9.0
 	go.etcd.io/etcd/client/v3 v3.5.4
-	go.uber.org/atomic v1.7.0
-	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	google.golang.org/grpc v1.48.0
-	google.golang.org/protobuf v1.27.1
+	go.uber.org/atomic v1.10.0
+	golang.org/x/sync v0.0.0-20220819030929-7fc1605a5dde
+	google.golang.org/grpc v1.49.0
+	google.golang.org/protobuf v1.28.1
 )
 
 require (

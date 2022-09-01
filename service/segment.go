@@ -13,12 +13,12 @@ import (
 )
 
 type Segment struct {
-	maxStep  int64              // 最大步长
-	duration time.Duration      // Segment维持时间
-	dao      storage.IDAllocDao // IDAllocDao
-	cache    sync.Map           // key: biz_tag value: segment buffer
+	maxStep  int64
+	duration time.Duration
+	dao      storage.IDAllocDao
+	cache    sync.Map
 	cancel   context.CancelFunc
-	sg       singleflight.Group // `synchronized`
+	sg       singleflight.Group
 }
 
 func NewSegment(ctx context.Context, conf *utils.Config) (*Segment, error) {
@@ -80,12 +80,15 @@ func (s *Segment) GetSegmentId(ctx context.Context, tag string) (int64, error) {
 	if !sgf.IsInitOk() {
 		_, err, _ := s.sg.Do(tag, func() (interface{}, error) {
 			if !sgf.IsInitOk() {
-				err := s.updateSegmentFromDb(ctx, tag, sgf.GetCurrent())
+				idx := sgf.CurrentIdx()
+				cur := sgf.GetCurrent()
+				err := s.updateSegmentFromDb(ctx, tag, cur)
 				if err != nil {
 					sgf.SetInitOk(false)
 					return 0, err
 				}
 				sgf.SetInitOk(true)
+				log.Infof("update segment buffer tag %s idx %d", tag, idx)
 			}
 			return 0, nil
 		})
@@ -109,7 +112,7 @@ func (s *Segment) Close(ctx context.Context) error {
 
 const (
 	updateInterval     = time.Minute
-	minDefaultStep     = 10000
+	minDefaultStep     = 100000
 	maxDefaultStep     = 1000000
 	minSegmentDuration = time.Minute * 5
 	maxSegmentDuration = time.Minute * 15
@@ -141,8 +144,7 @@ func (s *Segment) updateCacheFromDb(ctx context.Context) error {
 	}
 
 	for i := range toInsert {
-		sgf := storage.NewSegmentBuf(ctx)
-		sgf.SetKey(toInsert[i])
+		sgf := storage.NewSegmentBuf(ctx, toInsert[i])
 
 		sg := sgf.GetCurrent()
 		sg.SetValue(0)
@@ -171,7 +173,7 @@ func (s *Segment) updateCacheFromDb(ctx context.Context) error {
 func (s *Segment) updateSegmentFromDb(ctx context.Context, tag string, segment *storage.Segment) (err error) {
 	var allocator *utils.LeafAlloc
 
-	sgf := segment.GetParent()
+	sgf := segment.Parent
 	if !sgf.IsInitOk() {
 		allocator, err = s.dao.UpdateMaxIdAndGetLeafAlloc(ctx, tag)
 		if err != nil {
@@ -221,9 +223,11 @@ func (s *Segment) updateSegmentFromDb(ctx context.Context, tag string, segment *
 }
 
 func (s *Segment) getIdFromSegmentBuffer(ctx context.Context, segmentBuf *storage.SegmentBuf) (int64, error) {
-	var sg *storage.Segment
-	var val int64
-	var err error
+	var (
+		sg  *storage.Segment
+		val int64
+		err error
+	)
 
 	for {
 		if value := func() int64 {
@@ -233,7 +237,7 @@ func (s *Segment) getIdFromSegmentBuffer(ctx context.Context, segmentBuf *storag
 			sg = segmentBuf.GetCurrent()
 			if !segmentBuf.IsNextReady() &&
 				(sg.GetIdle() < int64(0.9*float64(sg.GetStep()))) &&
-				segmentBuf.ThreadRunning().CAS(false, true) {
+				segmentBuf.ThreadRunning().CompareAndSwap(false, true) {
 				go s.loadNextSegmentFromDB(context.TODO(), segmentBuf)
 			}
 
@@ -275,9 +279,12 @@ func (s *Segment) getIdFromSegmentBuffer(ctx context.Context, segmentBuf *storag
 }
 
 func (s *Segment) loadNextSegmentFromDB(ctx context.Context, segmentBuf *storage.SegmentBuf) {
+	log.Infof("begin load next sg for sgf tag %s next idx %d", segmentBuf.BizTag, segmentBuf.NextIdx())
+
 	sg := segmentBuf.GetNext()
-	err := s.updateSegmentFromDb(ctx, segmentBuf.GetKey(), sg)
+	err := s.updateSegmentFromDb(ctx, segmentBuf.BizTag, sg)
 	if err != nil {
+		log.Errorf("load next sg for sgf tag %s next idx %d err %+v", segmentBuf.BizTag, segmentBuf.NextIdx(), err)
 		segmentBuf.ThreadRunning().Store(false)
 		return
 	}
@@ -287,6 +294,7 @@ func (s *Segment) loadNextSegmentFromDB(ctx context.Context, segmentBuf *storage
 
 	segmentBuf.SetNextReady(true)
 	segmentBuf.ThreadRunning().Store(false)
+	log.Infof("finish load next sg for sgf tag %s next idx %d", segmentBuf.BizTag, segmentBuf.NextIdx())
 }
 
 func (s *Segment) waitAndSleep(segmentBuf *storage.SegmentBuf) {

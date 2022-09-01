@@ -77,6 +77,7 @@ func BenchmarkServer_Segment(b *testing.B) {
 		return
 	}
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := bench.GetSegment(context.Background(), &pb.GetSegmentIdReq{
 			Key: "test_tag",
@@ -92,6 +93,7 @@ func BenchmarkServer_Snowflake(b *testing.B) {
 		return
 	}
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := bench.GetSnowflake(context.Background(), &pb.GetSnowflakeIdReq{
 			Key: "test_tag",

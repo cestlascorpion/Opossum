@@ -45,7 +45,7 @@ func TestSegment_GetSegmentId(t *testing.T) {
 	fmt.Printf("%+v\n", svr)
 
 	for i := 0; i < 1024; i++ {
-		id, err := svr.GetSegmentId(context.Background(), "test_tag")
+		id, err := svr.GetSegmentId(context.Background(), "test")
 		if err != nil {
 			fmt.Println(err)
 			t.FailNow()
@@ -83,7 +83,7 @@ func TestSegment_GetSegmentId2(t *testing.T) {
 			defer wg.Done()
 
 			for i := 0; i < 1024; i++ {
-				id, err := svrList[i%len(svrList)].GetSegmentId(context.Background(), "test_tag")
+				id, err := svrList[i%len(svrList)].GetSegmentId(context.Background(), "test")
 				if err != nil {
 					fmt.Println(err)
 				}
@@ -101,8 +101,9 @@ func BenchmarkSegment_GetSegmentId(b *testing.B) {
 		return
 	}
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := segmentBench.GetSegmentId(context.Background(), "test_tag")
+		_, err := segmentBench.GetSegmentId(context.Background(), "test")
 		if err != nil {
 			fmt.Println(err)
 			return

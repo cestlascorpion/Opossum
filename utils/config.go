@@ -6,9 +6,7 @@ import (
 )
 
 type SgConf struct {
-	Table    string `json:"table,omitempty"`
-	MaxStep  int64  `json:"max_step,omitempty"`
-	Duration int64  `json:"duration,omitempty"`
+	Table string `json:"table,omitempty"`
 }
 
 type SnConf struct {
@@ -38,12 +36,10 @@ type Config struct {
 func NewConfigForTest() (*Config, error) {
 	return &Config{
 		Segment: &SgConf{
-			Table:    "for_test",
-			MaxStep:  1000000,
-			Duration: 15 * 60 * 1000,
+			Table: "test",
 		},
 		Snowflake: &SnConf{
-			Table:     "for_test",
+			Table:     "test",
 			Ethernet:  "eno1",
 			Port:      9090,
 			Endpoints: "127.0.0.1:2379",

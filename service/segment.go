@@ -9,29 +9,16 @@ import (
 	"github.com/cestlascorpion/opossum/storage"
 	"github.com/cestlascorpion/opossum/utils"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/sync/singleflight"
 )
 
 type Segment struct {
-	maxStep  int64
-	duration time.Duration
-	dao      storage.IDAllocDao
-	cache    sync.Map
-	cancel   context.CancelFunc
-	sg       singleflight.Group
+	dao    *storage.MySQL
+	cache  map[string]*buffer
+	mutex  sync.RWMutex
+	cancel context.CancelFunc
 }
 
 func NewSegment(ctx context.Context, conf *utils.Config) (*Segment, error) {
-	step := conf.Segment.MaxStep
-	if step > maxDefaultStep || step < minDefaultStep {
-		step = maxDefaultStep
-	}
-
-	duration := time.Millisecond * time.Duration(conf.Segment.Duration)
-	if duration > maxSegmentDuration || duration < minSegmentDuration {
-		duration = maxSegmentDuration
-	}
-
 	dao, err := storage.NewMySQL(ctx, conf)
 	if err != nil {
 		log.Errorf("new id alloc dao err %+v", err)
@@ -39,9 +26,8 @@ func NewSegment(ctx context.Context, conf *utils.Config) (*Segment, error) {
 	}
 
 	sg := &Segment{
-		maxStep:  step,
-		duration: duration,
-		dao:      dao,
+		dao:   dao,
+		cache: make(map[string]*buffer),
 	}
 
 	err = sg.updateCacheFromDb(ctx)
@@ -51,8 +37,6 @@ func NewSegment(ctx context.Context, conf *utils.Config) (*Segment, error) {
 	}
 
 	x, cancel := context.WithCancel(ctx)
-	sg.cancel = cancel
-
 	go func(ctx context.Context) {
 		ticker := time.NewTicker(updateInterval)
 		defer ticker.Stop()
@@ -60,45 +44,29 @@ func NewSegment(ctx context.Context, conf *utils.Config) (*Segment, error) {
 		for {
 			select {
 			case <-ctx.Done():
+				log.Infof("update cache from db exit...")
 				return
 			case <-ticker.C:
-				_ = sg.updateCacheFromDb(ctx)
+				err := sg.updateCacheFromDb(ctx)
+				if err != nil {
+					log.Errorf("update cache from db err %+v", err)
+				}
 			}
 		}
 	}(x)
-
+	sg.cancel = cancel
 	return sg, nil
 }
 
 func (s *Segment) GetSegmentId(ctx context.Context, tag string) (int64, error) {
-	value, ok := s.cache.Load(tag)
+	s.mutex.RLock()
+	buf, ok := s.cache[tag]
+	s.mutex.RUnlock()
+
 	if !ok {
 		return 0, errors.New(utils.ErrInvalidTagKey)
 	}
-
-	sgf := value.(*storage.SegmentBuf)
-	if !sgf.IsInitOk() {
-		_, err, _ := s.sg.Do(tag, func() (interface{}, error) {
-			if !sgf.IsInitOk() {
-				idx := sgf.CurrentIdx()
-				cur := sgf.GetCurrent()
-				err := s.updateSegmentFromDb(ctx, tag, cur)
-				if err != nil {
-					sgf.SetInitOk(false)
-					return 0, err
-				}
-				sgf.SetInitOk(true)
-				log.Infof("update segment buffer tag %s idx %d", tag, idx)
-			}
-			return 0, nil
-		})
-		if err != nil {
-			log.Errorf("update segment err %+v", err)
-			return 0, err
-		}
-	}
-
-	return s.getIdFromSegmentBuffer(ctx, sgf)
+	return buf.GetSegmentId(ctx), nil
 }
 
 func (s *Segment) Close(ctx context.Context) error {
@@ -111,11 +79,7 @@ func (s *Segment) Close(ctx context.Context) error {
 // ---------------------------------------------------------------------------------------------------------------------
 
 const (
-	updateInterval     = time.Minute
-	minDefaultStep     = 100000
-	maxDefaultStep     = 1000000
-	minSegmentDuration = time.Minute * 5
-	maxSegmentDuration = time.Minute * 15
+	updateInterval = time.Minute
 )
 
 func (s *Segment) updateCacheFromDb(ctx context.Context) error {
@@ -131,28 +95,31 @@ func (s *Segment) updateCacheFromDb(ctx context.Context) error {
 	}
 
 	localSet := make(map[string]struct{})
-	s.cache.Range(func(key, value any) bool {
-		localSet[key.(string)] = struct{}{}
-		return true
-	})
+	s.mutex.RLock()
+	for k := range s.cache {
+		localSet[k] = struct{}{}
+	}
+	s.mutex.RUnlock()
 
-	toInsert := make([]string, 0)
+	toInsert := make(map[string]*buffer)
 	for k := range remoteSet {
 		if _, ok := localSet[k]; !ok {
-			toInsert = append(toInsert, k)
+			sgf, err := newBuffer(ctx, k, s.dao)
+			if err != nil {
+				log.Errorf("create buffer for %s err %+v", k, err)
+				continue
+			}
+			toInsert[k] = sgf
 		}
 	}
 
-	for i := range toInsert {
-		sgf := storage.NewSegmentBuf(ctx, toInsert[i])
-
-		sg := sgf.GetCurrent()
-		sg.SetValue(0)
-		sg.SetMax(0)
-		sg.SetStep(0)
-
-		s.cache.Store(toInsert[i], sgf)
-		log.Infof("Insert tag %s into cache", toInsert[i])
+	if len(toInsert) != 0 {
+		s.mutex.Lock()
+		for k, v := range toInsert {
+			s.cache[k] = v
+			log.Infof("Insert tag %s into cache", k)
+		}
+		s.mutex.Unlock()
 	}
 
 	toRemove := make([]string, 0)
@@ -162,152 +129,71 @@ func (s *Segment) updateCacheFromDb(ctx context.Context) error {
 		}
 	}
 
-	for i := range toRemove {
-		s.cache.Delete(toRemove[i])
-		log.Infof("Remove tag %s from cache", toRemove[i])
+	if len(toRemove) != 0 {
+		s.mutex.Lock()
+		for i := range toRemove {
+			delete(s.cache, toRemove[i])
+			log.Infof("Remove tag %s from cache", toRemove[i])
+		}
+		s.mutex.Unlock()
 	}
 
 	return nil
 }
 
-func (s *Segment) updateSegmentFromDb(ctx context.Context, tag string, segment *storage.Segment) (err error) {
-	var allocator *utils.LeafAlloc
+// ---------------------------------------------------------------------------------------------------------------------
 
-	sgf := segment.Parent
-	if !sgf.IsInitOk() {
-		allocator, err = s.dao.UpdateMaxIdAndGetLeafAlloc(ctx, tag)
-		if err != nil {
-			log.Errorf("dao update err %+v", err)
-			return err
-		}
-		sgf.SetStep(allocator.Step)
-		sgf.SetMinStep(allocator.Step)
-
-	} else if sgf.GetUpdateTime() == 0 {
-		allocator, err = s.dao.UpdateMaxIdAndGetLeafAlloc(ctx, tag)
-		if err != nil {
-			log.Errorf("dao update err %+v", err)
-			return err
-		}
-		sgf.SetUpdateTime(time.Now().Unix())
-		sgf.SetMinStep(allocator.Step)
-	} else {
-		duration := time.Now().Unix() - sgf.GetUpdateTime()
-		nextStep := sgf.GetStep()
-		if duration < int64(s.duration) {
-			if nextStep*2 <= s.maxStep {
-				nextStep = nextStep * 2
-			}
-		}
-		if duration > int64(s.duration)*2 {
-			if nextStep/2 >= sgf.GetMinStep() {
-				nextStep = nextStep / 2
-			}
-		}
-		allocator, err = s.dao.UpdateMaxIdByCustomStepAndGetLeafAlloc(ctx, tag, nextStep)
-		if err != nil {
-			log.Errorf("dao update err %+v", err)
-			return err
-		}
-		sgf.SetUpdateTime(time.Now().Unix())
-		sgf.SetStep(nextStep)
-		sgf.SetMinStep(allocator.Step)
-	}
-
-	value := allocator.MaxId - sgf.GetStep()
-	segment.SetValue(value)
-	segment.SetMax(allocator.MaxId)
-	segment.SetStep(sgf.GetStep())
-
-	return nil
+type buffer struct {
+	bizTag string
+	buffer chan int64
+	cancel context.CancelFunc
 }
 
-func (s *Segment) getIdFromSegmentBuffer(ctx context.Context, segmentBuf *storage.SegmentBuf) (int64, error) {
-	var (
-		sg  *storage.Segment
-		val int64
-		err error
-	)
-
-	for {
-		if value := func() int64 {
-			segmentBuf.ReadLock()
-			defer segmentBuf.ReadUnlock()
-
-			sg = segmentBuf.GetCurrent()
-			if !segmentBuf.IsNextReady() &&
-				(sg.GetIdle() < int64(0.9*float64(sg.GetStep()))) &&
-				segmentBuf.ThreadRunning().CompareAndSwap(false, true) {
-				go s.loadNextSegmentFromDB(context.TODO(), segmentBuf)
-			}
-
-			val = sg.GetValue()
-			sg.IncValue()
-			if val < sg.GetMax() {
-				return val
-			}
-			return 0
-		}(); value != 0 {
-			return value, nil
-		}
-
-		s.waitAndSleep(segmentBuf)
-
-		val, err = func() (int64, error) {
-			segmentBuf.WriteLock()
-			defer segmentBuf.WriteUnlock()
-
-			sg = segmentBuf.GetCurrent()
-			val = sg.GetValue()
-			sg.IncValue()
-			if val < sg.GetMax() {
-				return val, nil
-			}
-
-			if segmentBuf.IsNextReady() {
-				segmentBuf.Switch()
-				segmentBuf.SetNextReady(false)
-			} else {
-				return 0, errors.New(utils.ErrNoBufferAvailable)
-			}
-			return 0, nil
-		}()
-		if val != 0 || err != nil {
-			return val, err
-		}
-	}
-}
-
-func (s *Segment) loadNextSegmentFromDB(ctx context.Context, segmentBuf *storage.SegmentBuf) {
-	log.Infof("begin load next sg for sgf tag %s next idx %d", segmentBuf.BizTag, segmentBuf.NextIdx())
-
-	sg := segmentBuf.GetNext()
-	err := s.updateSegmentFromDb(ctx, segmentBuf.BizTag, sg)
+func newBuffer(ctx context.Context, tag string, dao *storage.MySQL) (*buffer, error) {
+	alloc, err := dao.UpdateMaxIdAndGetLeafAlloc(ctx, tag)
 	if err != nil {
-		log.Errorf("load next sg for sgf tag %s next idx %d err %+v", segmentBuf.BizTag, segmentBuf.NextIdx(), err)
-		segmentBuf.ThreadRunning().Store(false)
-		return
+		log.Errorf("new buffer %s err %+v", err, tag)
+		return nil, err
 	}
 
-	segmentBuf.WriteLock()
-	defer segmentBuf.WriteUnlock()
+	ch := make(chan int64, alloc.Step*2)
+	log.Infof("begin to full buffer %s from %d to %d", tag, alloc.MaxId-alloc.Step, alloc.MaxId-1)
+	for id := alloc.MaxId - alloc.Step; id < alloc.MaxId; id++ {
+		ch <- id
+	}
+	log.Infof("finish to full buffer %s from %d to %d", tag, alloc.MaxId-alloc.Step, alloc.MaxId-1)
 
-	segmentBuf.SetNextReady(true)
-	segmentBuf.ThreadRunning().Store(false)
-	log.Infof("finish load next sg for sgf tag %s next idx %d", segmentBuf.BizTag, segmentBuf.NextIdx())
+	x, cancel := context.WithCancel(ctx)
+	go func(ctx context.Context) {
+		for {
+			select {
+			case <-ctx.Done():
+				log.Infof("buffer for %s exit...", tag)
+				return
+			default:
+				ac, err := dao.UpdateMaxIdAndGetLeafAlloc(ctx, tag)
+				if err != nil {
+					log.Errorf("fill buffer %s err %+v", tag, err)
+					continue
+				}
+				log.Infof("begin to full buffer %s from %d to %d", tag, ac.MaxId-ac.Step, ac.MaxId-1)
+				for id := ac.MaxId - ac.Step; id < ac.MaxId; id++ {
+					ch <- id
+				}
+				log.Infof("finish to full buffer %s from %d to %d", tag, ac.MaxId-ac.Step, ac.MaxId-1)
+			}
+		}
+	}(x)
+
+	return &buffer{
+		bizTag: tag,
+		buffer: ch,
+		cancel: cancel,
+	}, nil
 }
 
-func (s *Segment) waitAndSleep(segmentBuf *storage.SegmentBuf) {
-	const maxRoll = 10000
-
-	roll := 0
-	for segmentBuf.ThreadRunning().Load() {
-		roll++
-		if roll > maxRoll {
-			time.Sleep(time.Duration(10) * time.Millisecond)
-			break
-		}
-	}
+func (b *buffer) GetSegmentId(ctx context.Context) int64 {
+	return <-b.buffer
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

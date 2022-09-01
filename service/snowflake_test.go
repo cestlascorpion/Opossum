@@ -126,6 +126,7 @@ func BenchmarkNewSnowflake(b *testing.B) {
 		return
 	}
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := snowflakeBench.GetSnowflakeId(context.Background())
 		if err != nil {
@@ -170,6 +171,7 @@ func BenchmarkSnowflake_DecodeSnowflakeId(b *testing.B) {
 		return
 	}
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		id, err := snowflakeBench.GetSnowflakeId(context.Background())
 		if err != nil {

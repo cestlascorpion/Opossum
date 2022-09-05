@@ -14,7 +14,7 @@ var bench *MySQL
 func init() {
 	log.SetLevel(log.DebugLevel)
 
-	conf, err := utils.NewConfigForTest()
+	conf, err := utils.NewTestConfig()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -26,7 +26,7 @@ func init() {
 }
 
 func TestMySQL_GetAllTag(t *testing.T) {
-	conf, err := utils.NewConfigForTest()
+	conf, err := utils.NewTestConfig()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -68,7 +68,7 @@ func BenchmarkMySQL_GetAllTags(b *testing.B) {
 }
 
 func TestMySQL_UpdateMaxIdAndGetLeafAlloc(t *testing.T) {
-	conf, err := utils.NewConfigForTest()
+	conf, err := utils.NewTestConfig()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()

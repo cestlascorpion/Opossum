@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+
 	pb "github.com/cestlascorpion/opossum/proto"
 	"github.com/cestlascorpion/opossum/utils"
 	log "github.com/sirupsen/logrus"
@@ -62,12 +63,14 @@ func (s *Server) DecodeSnowflake(ctx context.Context, in *pb.DecodeSnowflakeIdRe
 	log.Debugf("decode snowflake req %+v", in)
 
 	out := &pb.DecodeSnowflakeIdResp{}
-	content, err := s.snowflake.DecodeSnowflakeId(ctx, in.Id)
+	ts, workerId, sequence, err := s.snowflake.DecodeSnowflakeId(ctx, in.Id)
 	if err != nil {
 		log.Errorf("decode snowflake id err %+v", err)
 		return out, err
 	}
-	out.Content = content
+	out.TimeStamp = ts
+	out.WorkerId = workerId
+	out.SequenceId = sequence
 	return out, nil
 }
 

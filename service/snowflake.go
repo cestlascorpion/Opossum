@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
 	"strconv"
@@ -99,13 +98,12 @@ func (s *Snowflake) GetSnowflakeId(ctx context.Context) (int64, error) {
 	return id, nil
 }
 
-func (s *Snowflake) DecodeSnowflakeId(ctx context.Context, id int64) (string, error) {
+func (s *Snowflake) DecodeSnowflakeId(ctx context.Context, id int64) (int64, int64, int64, error) {
 	ts := (id >> (sequenceBits + workerIdBits)) + twepoch
 	workerId := (id >> sequenceBits) ^ (id >> (sequenceBits + workerIdBits) << workerIdBits)
 	sequence := id ^ (id >> sequenceBits << sequenceBits)
 
-	content := fmt.Sprintf("%s %d %d", time.Unix(ts/1e3, (ts%1e3)*1e6).Format("2006-01-02 15:04:05.999"), workerId, sequence)
-	return content, nil
+	return ts, workerId, sequence, nil
 }
 
 func (s *Snowflake) Close(ctx context.Context) error {

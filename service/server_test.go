@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	pb "github.com/cestlascorpion/opossum/proto"
 	"github.com/cestlascorpion/opossum/utils"
@@ -15,7 +16,7 @@ var bench *Server
 func init() {
 	log.SetLevel(log.InfoLevel)
 
-	conf, err := utils.NewConfigForTest()
+	conf, err := utils.NewTestConfig()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -27,7 +28,7 @@ func init() {
 }
 
 func TestServer_Segment(t *testing.T) {
-	conf, err := utils.NewConfigForTest()
+	conf, err := utils.NewTestConfig()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -50,7 +51,7 @@ func TestServer_Segment(t *testing.T) {
 }
 
 func TestServer_Snowflake(t *testing.T) {
-	conf, err := utils.NewConfigForTest()
+	conf, err := utils.NewTestConfig()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -62,9 +63,7 @@ func TestServer_Snowflake(t *testing.T) {
 	}
 	defer svr.Close(context.Background())
 
-	resp, err := svr.GetSnowflake(context.Background(), &pb.GetSnowflakeIdReq{
-		Key: "test_key",
-	})
+	resp, err := svr.GetSnowflake(context.Background(), &pb.GetSnowflakeIdReq{})
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -95,9 +94,7 @@ func BenchmarkServer_Snowflake(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := bench.GetSnowflake(context.Background(), &pb.GetSnowflakeIdReq{
-			Key: "test_tag",
-		})
+		_, err := bench.GetSnowflake(context.Background(), &pb.GetSnowflakeIdReq{})
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -105,7 +102,7 @@ func BenchmarkServer_Snowflake(b *testing.B) {
 }
 
 func TestServer_DecodeSnowflake(t *testing.T) {
-	conf, err := utils.NewConfigForTest()
+	conf, err := utils.NewTestConfig()
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -117,9 +114,7 @@ func TestServer_DecodeSnowflake(t *testing.T) {
 	}
 	defer svr.Close(context.Background())
 
-	resp, err := svr.GetSnowflake(context.Background(), &pb.GetSnowflakeIdReq{
-		Key: "test_key",
-	})
+	resp, err := svr.GetSnowflake(context.Background(), &pb.GetSnowflakeIdReq{})
 	if err != nil {
 		fmt.Println(err)
 		t.FailNow()
@@ -131,5 +126,5 @@ func TestServer_DecodeSnowflake(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
-	fmt.Println(resp2.Content)
+	fmt.Println(time.UnixMilli(resp2.TimeStamp), resp2.WorkerId, resp2.SequenceId)
 }

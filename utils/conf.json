@@ -5,7 +5,7 @@
     "snowflake": {
         "table": "test",
         "ethernet": "eno1",
-        "port": 9090,
+        "port": 8080,
         "endpoints": "127.0.0.1:2379",
         "mysql": {
             "host":"localhost",

@@ -33,7 +33,7 @@ type Config struct {
 	Snowflake *SnConf ` json:"snowflake,omitempty"`
 }
 
-func NewConfigForTest() (*Config, error) {
+func NewTestConfig() (*Config, error) {
 	return &Config{
 		Segment: &SgConf{
 			Table: "test",
@@ -41,7 +41,7 @@ func NewConfigForTest() (*Config, error) {
 		Snowflake: &SnConf{
 			Table:     "test",
 			Ethernet:  "eno1",
-			Port:      9090,
+			Port:      8080,
 			Endpoints: "127.0.0.1:2379",
 			Mysql: &DB{
 				Host:     "localhost",

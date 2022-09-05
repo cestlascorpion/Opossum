@@ -19,7 +19,7 @@ message GetSegmentIdResp {
 }
 
 message GetSnowflakeIdReq {
-  string key = 1;
+  // nothing
 }
 
 message GetSnowflakeIdResp {
@@ -31,5 +31,7 @@ message DecodeSnowflakeIdReq {
 }
 
 message DecodeSnowflakeIdResp {
-  string content = 1;
+  int64 timeStamp = 1;
+  int64 workerId = 2;
+  int64 sequenceId = 3;
 }

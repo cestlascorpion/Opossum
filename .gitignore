@@ -4,3 +4,4 @@
 vendor
 
 *.pb.*
+!proto/*.pb.go

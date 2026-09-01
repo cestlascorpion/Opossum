@@ -25,6 +25,7 @@ func NewServer(ctx context.Context, conf *utils.Config) (*Server, error) {
 	sf, err := NewSnowflake(ctx, conf)
 	if err != nil {
 		log.Errorf("new snowflake impl err %+v", err)
+		_ = sg.Close(ctx)
 		return nil, err
 	}
 	return &Server{

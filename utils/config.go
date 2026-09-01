@@ -30,7 +30,7 @@ type DB struct {
 
 type Config struct {
 	Segment   *SgConf `json:"segment,omitempty"`
-	Snowflake *SnConf ` json:"snowflake,omitempty"`
+	Snowflake *SnConf `json:"snowflake,omitempty"`
 }
 
 func NewTestConfig() (*Config, error) {

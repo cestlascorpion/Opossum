@@ -9,7 +9,9 @@ import (
 )
 
 type Locker struct {
-	mutex *concurrency.Mutex
+	mutex   *concurrency.Mutex
+	session *concurrency.Session
+	client  *clientv3.Client
 }
 
 func NewLocker(ctx context.Context, path string, endpoints []string) (*Locker, error) {
@@ -25,11 +27,14 @@ func NewLocker(ctx context.Context, path string, endpoints []string) (*Locker, e
 	session, err := concurrency.NewSession(cli)
 	if err != nil {
 		log.Errorf("new session err %+v", err)
+		_ = cli.Close()
 		return nil, err
 	}
 
 	return &Locker{
-		mutex: concurrency.NewMutex(session, path),
+		mutex:   concurrency.NewMutex(session, path),
+		session: session,
+		client:  cli,
 	}, nil
 }
 
@@ -39,4 +44,17 @@ func (l *Locker) Lock(ctx context.Context) error {
 
 func (l *Locker) UnLock(ctx context.Context) error {
 	return l.mutex.Unlock(ctx)
+}
+
+func (l *Locker) Close() error {
+	if l == nil {
+		return nil
+	}
+	if l.session != nil {
+		_ = l.session.Close()
+	}
+	if l.client != nil {
+		return l.client.Close()
+	}
+	return nil
 }

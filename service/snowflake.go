@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,9 @@ type Snowflake struct {
 }
 
 func NewSnowflake(ctx context.Context, conf *utils.Config) (*Snowflake, error) {
+	if conf == nil || conf.Snowflake == nil {
+		return nil, errors.New(utils.ErrInvalidParameter)
+	}
 	table := conf.Snowflake.Table
 	if len(table) == 0 {
 		return nil, errors.New(utils.ErrInvalidParameter)
@@ -35,7 +39,13 @@ func NewSnowflake(ctx context.Context, conf *utils.Config) (*Snowflake, error) {
 		return nil, errors.New(utils.ErrInvalidParameter)
 	}
 
-	endpoints := strings.Split(conf.Snowflake.Endpoints, ",")
+	endpoints := make([]string, 0)
+	for _, endpoint := range strings.Split(conf.Snowflake.Endpoints, ",") {
+		endpoint = strings.TrimSpace(endpoint)
+		if endpoint != "" {
+			endpoints = append(endpoints, endpoint)
+		}
+	}
 	if len(endpoints) == 0 {
 		log.Errorf("invalid etcd endpoints")
 		return nil, errors.New(utils.ErrInvalidParameter)
@@ -55,6 +65,7 @@ func NewSnowflake(ctx context.Context, conf *utils.Config) (*Snowflake, error) {
 	id, err := h.GetWorkerId(ctx)
 	if err != nil {
 		log.Errorf("get worker id err %+v", err)
+		_ = h.Close(ctx)
 		return nil, err
 	}
 
@@ -144,8 +155,13 @@ func getHostAddress(eth string) string {
 			return v
 		}
 	} else {
-		for i := range ipList {
-			return ipList[i]
+		keys := make([]string, 0, len(ipList))
+		for key := range ipList {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			return ipList[key]
 		}
 	}
 	return ""
@@ -171,14 +187,13 @@ func getIpList() (map[string]string, error) {
 			switch v := addr[j].(type) {
 			case *net.IPNet:
 				ip = v.IP
-				list[n.Name] = ip.String()
 			case *net.IPAddr:
 				ip = v.IP
-				list[n.Name] = ip.String()
 			}
-			if utils.SkipIPV6 {
-				break
+			if ip == nil || (utils.SkipIPV6 && ip.To4() == nil) {
+				continue
 			}
+			list[n.Name] = ip.String()
 		}
 	}
 	return list, nil

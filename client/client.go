@@ -15,17 +15,26 @@ const (
 
 type Client struct {
 	pb.OpossumClient
+	conn *grpc.ClientConn
 }
 
 func NewClient(ctx context.Context, opts ...grpc.DialOption) (*Client, error) {
-	conn, err := grpc.Dial(address, opts...)
+	conn, err := grpc.DialContext(ctx, address, opts...)
 	if err != nil {
 		log.Errorf("connect fail err %+v", err)
 		return nil, err
 	}
 	return &Client{
 		OpossumClient: pb.NewOpossumClient(conn),
+		conn:          conn,
 	}, nil
+}
+
+func (c *Client) Close() error {
+	if c == nil || c.conn == nil {
+		return nil
+	}
+	return c.conn.Close()
 }
 
 func (c *Client) GetSegment(ctx context.Context, tag string, opts ...grpc.CallOption) (int64, error) {

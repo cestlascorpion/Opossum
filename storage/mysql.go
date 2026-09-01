@@ -21,6 +21,9 @@ type MySQL struct {
 }
 
 func NewMySQL(ctx context.Context, conf *utils.Config) (*MySQL, error) {
+	if conf == nil || conf.Segment == nil || conf.Snowflake == nil || conf.Snowflake.Mysql == nil {
+		return nil, errors.New(utils.ErrInvalidParameter)
+	}
 	table := conf.Segment.Table
 	if len(table) == 0 {
 		return nil, errors.New(utils.ErrInvalidParameter)

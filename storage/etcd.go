@@ -25,6 +25,7 @@ type EtcdHolder struct {
 	lastUpdateTs int64
 	workerId     int64
 	cancel       context.CancelFunc
+	client       *clientv3.Client
 }
 
 func NewEtcdHolder(ctx context.Context, ip, port string, endpoints []string, table string, maxId int64) (*EtcdHolder, error) {
@@ -49,15 +50,18 @@ func NewEtcdHolder(ctx context.Context, ip, port string, endpoints []string, tab
 	err = locker.Lock(ctx)
 	if err != nil {
 		log.Errorf("locker lock err %+v", err)
+		_ = locker.Close()
 		return nil, err
 	}
 	defer func() {
 		_ = locker.UnLock(ctx)
+		_ = locker.Close()
 	}()
 
 	err = e.initWorkerId(ctx)
 	if err != nil {
 		log.Errorf("init worker id err %+v", err)
+		_ = e.Close(ctx)
 		return nil, err
 	}
 
@@ -70,7 +74,15 @@ func (e *EtcdHolder) GetWorkerId(ctx context.Context) (int64, error) {
 }
 
 func (e *EtcdHolder) Close(ctx context.Context) error {
-	e.cancel()
+	if e == nil {
+		return nil
+	}
+	if e.cancel != nil {
+		e.cancel()
+	}
+	if e.client != nil {
+		return e.client.Close()
+	}
 	return nil
 }
 
@@ -103,6 +115,7 @@ func (e *EtcdHolder) initWorkerId(ctx context.Context) error {
 		log.Errorf("new etcd client err %+v", err)
 		return err
 	}
+	e.client = cli
 
 	resp, err := cli.Get(ctx, e.path.ForeverPath, clientv3.WithPrefix())
 	if err != nil {
@@ -197,6 +210,9 @@ func (e *EtcdHolder) checkInitTimeStamp(ctx context.Context, cli *clientv3.Clien
 		return false
 	}
 	node, err := e.unmarshallNode(resp.Kvs[0].Value)
+	if err != nil {
+		return false
+	}
 	return !(node.Ts > time.Now().UnixMilli())
 }
 
@@ -213,7 +229,7 @@ func (e *EtcdHolder) scheduledUploadData(ctx context.Context, cli *clientv3.Clie
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				err := e.updateNewData(context.Background(), cli, path)
+				err := e.updateNewData(ctx, cli, path)
 				if err != nil {
 					log.Errorf("update new data err %+v", err)
 				}

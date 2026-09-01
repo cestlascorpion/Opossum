@@ -33,6 +33,7 @@ func NewSegment(ctx context.Context, conf *utils.Config) (*Segment, error) {
 	err = sg.updateCacheFromDb(ctx)
 	if err != nil {
 		log.Errorf("update cache from db err %+v", err)
+		dao.Close(ctx)
 		return nil, err
 	}
 
@@ -66,12 +67,23 @@ func (s *Segment) GetSegmentId(ctx context.Context, tag string) (int64, error) {
 	if !ok {
 		return 0, errors.New(utils.ErrInvalidTagKey)
 	}
-	return buf.GetSegmentId(ctx), nil
+	return buf.GetSegmentId(ctx)
 }
 
 func (s *Segment) Close(ctx context.Context) error {
 	if s.cancel != nil {
 		s.cancel()
+	}
+	s.mutex.Lock()
+	for tag, buf := range s.cache {
+		if buf.cancel != nil {
+			buf.cancel()
+		}
+		delete(s.cache, tag)
+	}
+	s.mutex.Unlock()
+	if s.dao != nil {
+		s.dao.Close(ctx)
 	}
 	return nil
 }
@@ -132,6 +144,9 @@ func (s *Segment) updateCacheFromDb(ctx context.Context) error {
 	if len(toRemove) != 0 {
 		s.mutex.Lock()
 		for i := range toRemove {
+			if buf, ok := s.cache[toRemove[i]]; ok && buf.cancel != nil {
+				buf.cancel()
+			}
 			delete(s.cache, toRemove[i])
 			log.Infof("Remove tag %s from cache", toRemove[i])
 		}
@@ -155,6 +170,9 @@ func newBuffer(ctx context.Context, tag string, dao *storage.MySQL) (*buffer, er
 		log.Errorf("new buffer %s err %+v", err, tag)
 		return nil, err
 	}
+	if alloc == nil || alloc.Step <= 0 || alloc.MaxId < alloc.Step {
+		return nil, errors.New(utils.ErrInvalidParameter)
+	}
 
 	ch := make(chan int64, alloc.Step*2)
 	log.Infof("begin to full buffer %s from %d to %d", tag, alloc.MaxId-alloc.Step, alloc.MaxId-1)
@@ -165,20 +183,30 @@ func newBuffer(ctx context.Context, tag string, dao *storage.MySQL) (*buffer, er
 
 	x, cancel := context.WithCancel(ctx)
 	go func(ctx context.Context) {
+		ticker := time.NewTicker(updateInterval)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				log.Infof("buffer for %s exit...", tag)
 				return
-			default:
+			case <-ticker.C:
 				ac, err := dao.UpdateMaxIdAndGetLeafAlloc(ctx, tag)
 				if err != nil {
 					log.Errorf("fill buffer %s err %+v", tag, err)
 					continue
 				}
 				log.Infof("begin to full buffer %s from %d to %d", tag, ac.MaxId-ac.Step, ac.MaxId-1)
+				if ac.Step <= 0 || ac.MaxId < ac.Step {
+					log.Errorf("fill buffer %s invalid allocation %+v", tag, ac)
+					continue
+				}
 				for id := ac.MaxId - ac.Step; id < ac.MaxId; id++ {
-					ch <- id
+					select {
+					case ch <- id:
+					case <-ctx.Done():
+						return
+					}
 				}
 				log.Infof("finish to full buffer %s from %d to %d", tag, ac.MaxId-ac.Step, ac.MaxId-1)
 			}
@@ -192,8 +220,13 @@ func newBuffer(ctx context.Context, tag string, dao *storage.MySQL) (*buffer, er
 	}, nil
 }
 
-func (b *buffer) GetSegmentId(ctx context.Context) int64 {
-	return <-b.buffer
+func (b *buffer) GetSegmentId(ctx context.Context) (int64, error) {
+	select {
+	case id := <-b.buffer:
+		return id, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -92,6 +92,7 @@ func (s *Segment) Close(ctx context.Context) error {
 
 const (
 	updateInterval = time.Minute
+	retryInterval  = time.Second
 )
 
 func (s *Segment) updateCacheFromDb(ctx context.Context) error {
@@ -161,10 +162,15 @@ func (s *Segment) updateCacheFromDb(ctx context.Context) error {
 type buffer struct {
 	bizTag string
 	buffer chan int64
+	wake   chan struct{}
 	cancel context.CancelFunc
 }
 
-func newBuffer(ctx context.Context, tag string, dao *storage.MySQL) (*buffer, error) {
+type allocDao interface {
+	UpdateMaxIdAndGetLeafAlloc(context.Context, string) (*utils.LeafAlloc, error)
+}
+
+func newBuffer(ctx context.Context, tag string, dao allocDao) (*buffer, error) {
 	alloc, err := dao.UpdateMaxIdAndGetLeafAlloc(ctx, tag)
 	if err != nil {
 		log.Errorf("new buffer %s err %+v", err, tag)
@@ -182,25 +188,35 @@ func newBuffer(ctx context.Context, tag string, dao *storage.MySQL) (*buffer, er
 	log.Infof("finish to full buffer %s from %d to %d", tag, alloc.MaxId-alloc.Step, alloc.MaxId-1)
 
 	x, cancel := context.WithCancel(ctx)
+	b := &buffer{
+		bizTag: tag,
+		buffer: ch,
+		wake:   make(chan struct{}, 1),
+		cancel: cancel,
+	}
 	go func(ctx context.Context) {
-		ticker := time.NewTicker(updateInterval)
-		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				log.Infof("buffer for %s exit...", tag)
 				return
-			case <-ticker.C:
+			case <-b.wake:
 				ac, err := dao.UpdateMaxIdAndGetLeafAlloc(ctx, tag)
 				if err != nil {
 					log.Errorf("fill buffer %s err %+v", tag, err)
+					if !b.later(ctx) {
+						return
+					}
+					continue
+				}
+				if ac == nil || ac.Step <= 0 || ac.MaxId < ac.Step {
+					log.Errorf("fill buffer %s invalid allocation %+v", tag, ac)
+					if !b.later(ctx) {
+						return
+					}
 					continue
 				}
 				log.Infof("begin to full buffer %s from %d to %d", tag, ac.MaxId-ac.Step, ac.MaxId-1)
-				if ac.Step <= 0 || ac.MaxId < ac.Step {
-					log.Errorf("fill buffer %s invalid allocation %+v", tag, ac)
-					continue
-				}
 				for id := ac.MaxId - ac.Step; id < ac.MaxId; id++ {
 					select {
 					case ch <- id:
@@ -209,23 +225,44 @@ func newBuffer(ctx context.Context, tag string, dao *storage.MySQL) (*buffer, er
 					}
 				}
 				log.Infof("finish to full buffer %s from %d to %d", tag, ac.MaxId-ac.Step, ac.MaxId-1)
+				if len(ch) <= cap(ch)/2 {
+					b.notify()
+				}
 			}
 		}
 	}(x)
-
-	return &buffer{
-		bizTag: tag,
-		buffer: ch,
-		cancel: cancel,
-	}, nil
+	b.notify()
+	return b, nil
 }
 
 func (b *buffer) GetSegmentId(ctx context.Context) (int64, error) {
 	select {
 	case id := <-b.buffer:
+		if len(b.buffer) <= cap(b.buffer)/2 {
+			b.notify()
+		}
 		return id, nil
 	case <-ctx.Done():
 		return 0, ctx.Err()
+	}
+}
+
+func (b *buffer) notify() {
+	select {
+	case b.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (b *buffer) later(ctx context.Context) bool {
+	timer := time.NewTimer(retryInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		b.notify()
+		return true
 	}
 }
 

@@ -24,7 +24,7 @@ func NewLocker(ctx context.Context, path string, endpoints []string) (*Locker, e
 		return nil, err
 	}
 
-	session, err := concurrency.NewSession(cli)
+	session, err := concurrency.NewSession(cli, concurrency.WithContext(ctx))
 	if err != nil {
 		log.Errorf("new session err %+v", err)
 		_ = cli.Close()

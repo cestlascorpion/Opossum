@@ -69,7 +69,20 @@ func (o *Config) MySQLSourceName() string {
 }
 
 func (o *Config) String() string {
-	bs, err := json.Marshal(o)
+	if o == nil {
+		return ""
+	}
+	cp := *o
+	if o.Snowflake != nil {
+		sn := *o.Snowflake
+		cp.Snowflake = &sn
+		if o.Snowflake.Mysql != nil {
+			db := *o.Snowflake.Mysql
+			db.Password = "******"
+			sn.Mysql = &db
+		}
+	}
+	bs, err := json.Marshal(&cp)
 	if err != nil {
 		return ""
 	}

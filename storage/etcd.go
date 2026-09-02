@@ -13,6 +13,7 @@ import (
 	"github.com/cestlascorpion/opossum/utils"
 	log "github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
 type EtcdHolder struct {
@@ -26,6 +27,7 @@ type EtcdHolder struct {
 	workerId     int64
 	cancel       context.CancelFunc
 	client       *clientv3.Client
+	session      *concurrency.Session
 }
 
 func NewEtcdHolder(ctx context.Context, ip, port string, endpoints []string, table string, maxId int64) (*EtcdHolder, error) {
@@ -38,6 +40,7 @@ func NewEtcdHolder(ctx context.Context, ip, port string, endpoints []string, tab
 		path: &etcdPath{
 			LockPath:    fmt.Sprintf(etcdLockerPath, table),
 			ForeverPath: fmt.Sprintf(etcdForeverPath, table),
+			ActivePath:  fmt.Sprintf(etcdActivePath, table),
 		},
 	}
 
@@ -77,13 +80,19 @@ func (e *EtcdHolder) Close(ctx context.Context) error {
 	if e == nil {
 		return nil
 	}
+	var err error
+	if e.session != nil {
+		err = e.session.Close()
+	}
 	if e.cancel != nil {
 		e.cancel()
 	}
 	if e.client != nil {
-		return e.client.Close()
+		if closeErr := e.client.Close(); err == nil {
+			err = closeErr
+		}
 	}
-	return nil
+	return err
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -91,13 +100,16 @@ func (e *EtcdHolder) Close(ctx context.Context) error {
 const (
 	etcdLockerPath  = "/snowflake/%s/locker"
 	etcdForeverPath = "/snowflake/%s/forever"
+	etcdActivePath  = "/snowflake/%s/active"
 	dialTimeout     = time.Second * 10
 	updateInterval  = time.Second * 3
+	activeTTL       = 10
 )
 
 type etcdPath struct {
 	LockPath    string
 	ForeverPath string
+	ActivePath  string
 }
 
 type endpoint struct {
@@ -130,8 +142,7 @@ func (e *EtcdHolder) initWorkerId(ctx context.Context) error {
 			log.Errorf("create node err %+v", err)
 			return err
 		}
-		e.scheduledUploadData(ctx, cli, p)
-		return nil
+		return e.start(ctx, cli, p)
 	}
 
 	nodeMap := make(map[string]int64)
@@ -158,7 +169,9 @@ func (e *EtcdHolder) initWorkerId(ctx context.Context) error {
 			return errors.New(utils.ErrInvalidClockTime)
 		}
 		e.workerId = workerId
-		e.scheduledUploadData(ctx, cli, p)
+		if err := e.start(ctx, cli, p); err != nil {
+			return err
+		}
 		log.Infof("restart node %s ok", e.addr)
 		return nil
 	}
@@ -180,7 +193,29 @@ func (e *EtcdHolder) initWorkerId(ctx context.Context) error {
 		log.Errorf("create node err %+v", err)
 		return err
 	}
-	e.scheduledUploadData(ctx, cli, p)
+	return e.start(ctx, cli, p)
+}
+
+func (e *EtcdHolder) start(ctx context.Context, cli *clientv3.Client, path string) error {
+	s, err := concurrency.NewSession(cli, concurrency.WithTTL(activeTTL), concurrency.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	key := fmt.Sprintf("%s/%s", e.path.ActivePath, e.addr)
+	resp, err := cli.Txn(ctx).
+		If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
+		Then(clientv3.OpPut(key, strconv.FormatInt(e.workerId, 10), clientv3.WithLease(s.Lease()))).
+		Commit()
+	if err != nil {
+		_ = s.Close()
+		return err
+	}
+	if !resp.Succeeded {
+		_ = s.Close()
+		return errors.New(utils.ErrWorkerIdInUse)
+	}
+	e.session = s
+	e.scheduledUploadData(ctx, cli, path)
 	return nil
 }
 

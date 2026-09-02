@@ -84,7 +84,7 @@ func (m *MySQL) UpdateMaxIdAndGetLeafAlloc(ctx context.Context, tag string) (*ut
 	result := &utils.LeafAlloc{}
 
 	err := doTx(ctx, m, func(tx *sqlx.Tx) error {
-		res, err := m.ExecContext(ctx, m.query.UpdateMaxIdSql, tag)
+		res, err := tx.ExecContext(ctx, m.query.UpdateMaxIdSql, tag)
 		if err != nil {
 			return err
 		}
@@ -96,7 +96,7 @@ func (m *MySQL) UpdateMaxIdAndGetLeafAlloc(ctx context.Context, tag string) (*ut
 			return sql.ErrNoRows
 		}
 
-		err = m.GetContext(ctx, result, m.query.GetLeafAllocSql, tag)
+		err = tx.GetContext(ctx, result, m.query.GetLeafAllocSql, tag)
 		if err != nil {
 			return err
 		}

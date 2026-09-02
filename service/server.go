@@ -15,8 +15,6 @@ type Server struct {
 }
 
 func NewServer(ctx context.Context, conf *utils.Config) (*Server, error) {
-	log.Debugf("conf %+v", conf)
-
 	sg, err := NewSegment(ctx, conf)
 	if err != nil {
 		log.Errorf("new segment impl err %+v", err)

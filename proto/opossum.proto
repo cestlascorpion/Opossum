@@ -2,36 +2,26 @@ syntax = "proto3";
 
 package Opossum;
 
-option go_package = "github.com/cestlascorpion/Opossum;opossum";
+option go_package = "github.com/cestlascorpion/opossum/proto;opossum";
 
-service opossum {
-  rpc GetSegment (GetSegmentIdReq) returns (GetSegmentIdResp) {}
-  rpc GetSnowflake (GetSnowflakeIdReq) returns (GetSnowflakeIdResp) {}
-  rpc DecodeSnowflake(DecodeSnowflakeIdReq) returns (DecodeSnowflakeIdResp) {}
+service Opossum {
+  rpc AllocSegment (AllocSegmentReq) returns (AllocSegmentResp) {}
+  rpc GetSnowflakes (GetSnowflakesReq) returns (GetSnowflakesResp) {}
 }
 
-message GetSegmentIdReq {
+message AllocSegmentReq {
   string key = 1;
 }
 
-message GetSegmentIdResp {
-  int64 id = 1;
+message AllocSegmentResp {
+  int64 start = 1;
+  int64 end = 2;
 }
 
-message GetSnowflakeIdReq {
-  // nothing
+message GetSnowflakesReq {
+  uint32 count = 1;
 }
 
-message GetSnowflakeIdResp {
-  int64 id = 1;
-}
-
-message DecodeSnowflakeIdReq {
-  int64 id = 1;
-}
-
-message DecodeSnowflakeIdResp {
-  int64 timeStamp = 1;
-  int64 workerId = 2;
-  int64 sequenceId = 3;
+message GetSnowflakesResp {
+  repeated int64 ids = 1;
 }

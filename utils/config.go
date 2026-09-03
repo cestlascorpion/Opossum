@@ -33,29 +33,6 @@ type Config struct {
 	Snowflake *SnConf `json:"snowflake,omitempty"`
 }
 
-func NewTestConfig() (*Config, error) {
-	return &Config{
-		Segment: &SgConf{
-			Table: "test",
-		},
-		Snowflake: &SnConf{
-			Table:     "test",
-			Ethernet:  "eno1",
-			Port:      8080,
-			Endpoints: "127.0.0.1:2379",
-			Mysql: &DB{
-				Host:     "localhost",
-				Port:     3306,
-				Protocol: "tcp",
-				Database: "leaf",
-				UserName: "hans",
-				Password: "123456",
-				Charset:  "utf8",
-			},
-		},
-	}, nil
-}
-
 func (o *Config) MySQLSourceName() string {
 	mysql := o.Snowflake.Mysql
 	return fmt.Sprintf("%s:%s@%s(%s:%d)/%s?charset=%s&parseTime=true&loc=Local",

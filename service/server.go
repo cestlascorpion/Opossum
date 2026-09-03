@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	pb "github.com/cestlascorpion/opossum/proto"
 	"github.com/cestlascorpion/opossum/utils"
@@ -17,64 +18,49 @@ type Server struct {
 func NewServer(ctx context.Context, conf *utils.Config) (*Server, error) {
 	sg, err := NewSegment(ctx, conf)
 	if err != nil {
-		log.Errorf("new segment impl err %+v", err)
 		return nil, err
 	}
 	sf, err := NewSnowflake(ctx, conf)
 	if err != nil {
-		log.Errorf("new snowflake impl err %+v", err)
 		_ = sg.Close(ctx)
 		return nil, err
 	}
-	return &Server{
-		segment:   sg,
-		snowflake: sf,
-	}, nil
+	return &Server{segment: sg, snowflake: sf}, nil
 }
 
-func (s *Server) GetSegment(ctx context.Context, in *pb.GetSegmentIdReq) (*pb.GetSegmentIdResp, error) {
-	log.Debugf("segment req %+v", in)
-
-	out := &pb.GetSegmentIdResp{}
-	id, err := s.segment.GetSegmentId(ctx, in.Key)
-	if err != nil {
-		log.Errorf("get segment id err %+v", err)
-		return out, err
+func (s *Server) AllocSegment(ctx context.Context, in *pb.AllocSegmentReq) (*pb.AllocSegmentResp, error) {
+	if in == nil {
+		return nil, errors.New(utils.ErrInvalidParameter)
 	}
-	out.Id = id
-	return out, nil
+	start, end, err := s.segment.Alloc(ctx, in.Key)
+	if err != nil {
+		log.Errorf("alloc segment err %+v", err)
+		return nil, err
+	}
+	return &pb.AllocSegmentResp{Start: start, End: end}, nil
 }
 
-func (s *Server) GetSnowflake(ctx context.Context, in *pb.GetSnowflakeIdReq) (*pb.GetSnowflakeIdResp, error) {
-	log.Debugf("snowflake req %+v", in)
-
-	out := &pb.GetSnowflakeIdResp{}
-	id, err := s.snowflake.GetSnowflakeId(ctx)
-	if err != nil {
-		log.Errorf("get snowflake id err %+v", err)
-		return out, err
+func (s *Server) GetSnowflakes(ctx context.Context, in *pb.GetSnowflakesReq) (*pb.GetSnowflakesResp, error) {
+	if in == nil {
+		return nil, errors.New(utils.ErrInvalidParameter)
 	}
-	out.Id = id
-	return out, nil
-}
-
-func (s *Server) DecodeSnowflake(ctx context.Context, in *pb.DecodeSnowflakeIdReq) (*pb.DecodeSnowflakeIdResp, error) {
-	log.Debugf("decode snowflake req %+v", in)
-
-	out := &pb.DecodeSnowflakeIdResp{}
-	ts, workerId, sequence, err := s.snowflake.DecodeSnowflakeId(ctx, in.Id)
+	ids, err := s.snowflake.GetSnowflakeIds(ctx, in.Count)
 	if err != nil {
-		log.Errorf("decode snowflake id err %+v", err)
-		return out, err
+		log.Errorf("get snowflake ids err %+v", err)
+		return nil, err
 	}
-	out.TimeStamp = ts
-	out.WorkerId = workerId
-	out.SequenceId = sequence
-	return out, nil
+	return &pb.GetSnowflakesResp{Ids: ids}, nil
 }
 
 func (s *Server) Close(ctx context.Context) error {
-	_ = s.segment.Close(ctx)
-	_ = s.snowflake.Close(ctx)
+	if s == nil {
+		return nil
+	}
+	if s.segment != nil {
+		_ = s.segment.Close(ctx)
+	}
+	if s.snowflake != nil {
+		return s.snowflake.Close(ctx)
+	}
 	return nil
 }

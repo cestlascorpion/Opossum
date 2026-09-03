@@ -1,46 +1,43 @@
 # Opossum
 
-Opossum is a distributed Id service written in Go and exposed through gRPC. Its
-design is based on [Meituan Leaf](https://github.com/Meituan-Dianping/Leaf), and
-it supports both segment and Snowflake Id generation.
+[中文](README.zh-CN.md) | English
+
+> Experimental software. Opossum is a prototype for validating distributed Id
+> allocation ideas. Its API, storage layout, and behavior may change without
+> notice. Do not use it for production data.
+
+Opossum is a distributed Id service written in Go and exposed through gRPC. It
+supports database-backed segment allocation and Snowflake Id generation.
 
 ## Features
 
-- Segment mode
-  - Stores the maximum value and allocation step for each business tag in MySQL
-  - Prefetches segments in memory and refills the buffer at a low-water mark
-  - Uses database transactions to prevent overlapping segments across instances
-- Snowflake mode
-  - Generates 64-bit, roughly time-ordered Ids
-  - Allocates and persists workerId values through etcd
-  - Uses leased keys to prevent live instances from sharing a workerId
-  - Decodes the generation time, workerId, and sequence number from an Id
-- gRPC API
-  - `GetSegment`
-  - `GetSnowflake`
-  - `DecodeSnowflake`
+- Segment mode allocates non-overlapping `[start, end)` ranges in MySQL
+- The Go client caches segment ranges and returns individual Ids locally
+- Snowflake mode automatically allocates and recycles workerIds through etcd
+- Leased active keys and persistent time fences protect workerId reuse
+- A Snowflake request can generate from 1 through 4096 Ids
+- Snowflake decoding runs locally without an RPC
 
 ## Requirements
 
 - Go 1.18 or later
 - MySQL 5.7 or later
-- etcd 3.5
+- etcd 3.5 or later
 - `protoc` and its Go plugins when regenerating protocol code
 
-The server always listens on `:8080`. The built-in Go client always connects to
-`127.0.0.1:8080`.
+The server listens on `:8080`.
 
 ## Quick Start
 
 ### 1. Create the MySQL table
 
-`segment.table` is the table suffix. For example, a value of `test` makes
-Opossum use the table `leaf_alloc_test`.
+`segment.table` is the table suffix. A value of `test` selects
+`opossum_alloc_test`.
 
 ```sql
-CREATE DATABASE IF NOT EXISTS leaf;
+CREATE DATABASE IF NOT EXISTS opossum;
 
-CREATE TABLE leaf.leaf_alloc_test (
+CREATE TABLE opossum.opossum_alloc_test (
     biz_tag varchar(128) NOT NULL DEFAULT '',
     max_id bigint NOT NULL DEFAULT 1,
     step int NOT NULL,
@@ -50,28 +47,26 @@ CREATE TABLE leaf.leaf_alloc_test (
     PRIMARY KEY (biz_tag)
 ) ENGINE=InnoDB;
 
-INSERT INTO leaf.leaf_alloc_test (biz_tag, max_id, step)
+INSERT INTO opossum.opossum_alloc_test (biz_tag, max_id, step)
 VALUES ('order', 0, 10000);
 ```
 
-Each `biz_tag` defines an independent Id space. The `step` value determines how
-many Ids the service obtains from MySQL in each allocation.
+Each `biz_tag` has an independent Id space. `step` controls the size of each
+range allocated to a client.
 
 ### 2. Start etcd
 
-Opossum uses etcd to store workerId mappings and instance leases. The default
-example connects to `127.0.0.1:2379`.
-
-Check that etcd is available:
+Opossum stores active workerId leases and persistent time fences in etcd. The
+default endpoint is `127.0.0.1:2379`.
 
 ```bash
+etcd
 etcdctl --endpoints=127.0.0.1:2379 endpoint health
 ```
 
 ### 3. Create the configuration
 
-The server reads `conf.json` from its current working directory. Create the file
-in the repository root:
+The server reads `conf.json` from its working directory:
 
 ```json
 {
@@ -80,14 +75,14 @@ in the repository root:
   },
   "snowflake": {
     "table": "opossum",
-    "addr": "192.168.1.10",
+    "addr": "127.0.0.1",
     "port": 8080,
     "endpoints": "127.0.0.1:2379",
     "mysql": {
       "host": "127.0.0.1",
       "port": 3306,
       "protocol": "tcp",
-      "database": "leaf",
+      "database": "opossum",
       "username": "opossum",
       "password": "change-me",
       "charset": "utf8mb4"
@@ -96,147 +91,119 @@ in the repository root:
 }
 ```
 
-Configuration fields:
-
 | Field | Description |
 | --- | --- |
 | `segment.table` | MySQL table suffix |
 | `snowflake.table` | etcd namespace |
-| `snowflake.addr` | Stable address of this instance |
-| `snowflake.ethernet` | Network interface used to discover an address when `addr` is empty |
-| `snowflake.port` | Instance port, also used as part of the workerId identity |
+| `snowflake.addr` | Address recorded for the lease owner |
+| `snowflake.ethernet` | Interface used to discover an address when `addr` is empty |
+| `snowflake.port` | Port recorded for the lease owner |
 | `snowflake.endpoints` | Comma-separated etcd endpoints |
 | `snowflake.mysql` | MySQL connection used by segment mode |
 
-The combination of `addr` and `port` must be unique among live instances.
-Production deployments should configure `addr` explicitly to avoid selecting a
-loopback or temporary network interface.
+The address is diagnostic metadata and does not determine the workerId.
+
+Snowflake workerIds use 10 bits and range from `0` through `1023`. Each
+`snowflake.table` namespace supports up to 1024 concurrently active workers. A
+workerId becomes reusable after its lease expires and its time fence passes.
 
 ### 4. Start the server
 
-Run the server from the repository root containing `conf.json`:
-
 ```bash
-go mod download
 go run ./server
 ```
-
-The server listens on `0.0.0.0:8080` and enables gRPC reflection.
 
 ## Go Client
 
 ```go
-package main
+ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+defer cancel()
 
-import (
-	"context"
-	"fmt"
-	"log"
-	"time"
-
-	"github.com/cestlascorpion/opossum/client"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+c, err := client.NewClient(
+    ctx,
+    "127.0.0.1:8080",
+    grpc.WithTransportCredentials(insecure.NewCredentials()),
+    grpc.WithBlock(),
 )
-
-func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	c, err := client.NewClient(
-		ctx,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer c.Close()
-
-	segmentId, err := c.GetSegment(context.Background(), "order")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	snowflakeId, err := c.GetSnowflake(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	tm, workerId, sequence, err := c.DecodeSnowflake(
-		context.Background(),
-		snowflakeId,
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println(segmentId)
-	fmt.Println(snowflakeId, tm, workerId, sequence)
+if err != nil {
+    log.Fatal(err)
 }
+defer c.Close()
+
+segmentId, err := c.GetSegment(context.Background(), "order")
+if err != nil {
+    log.Fatal(err)
+}
+
+snowflakeIds, err := c.GetSnowflakes(context.Background(), 128)
+if err != nil {
+    log.Fatal(err)
+}
+
+tm, workerId, sequence := client.DecodeSnowflake(snowflakeIds[0])
 ```
 
-Use a context with a deadline when creating a client. When `grpc.WithBlock()`
-is enabled, a connection attempt will wait indefinitely if the server is
-unavailable and the context has no deadline.
+Use deadlines for connection and RPC contexts.
 
 ## gRPC API
 
 | Method | Request | Response |
 | --- | --- | --- |
-| `GetSegment` | Business tag in `key` | Segment Id |
-| `GetSnowflake` | Empty request | Snowflake Id |
-| `DecodeSnowflake` | Snowflake Id | Generation time, workerId, and sequence number |
+| `AllocSegment` | Business tag in `key` | A `[start, end)` Id range |
+| `GetSnowflakes` | `count` from 1 through 4096 | Snowflake Id list |
 
 The protocol is defined in [`proto/opossum.proto`](proto/opossum.proto).
 
 ## Regenerate Protocol Code
 
-Install the generators:
-
 ```bash
 go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.1
 go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
-```
-
-Run the script from the `proto` directory:
-
-```bash
 cd proto
 ./gen.sh
 ```
 
-The generated files are `proto/opossum.pb.go` and
-`proto/opossum_grpc.pb.go`.
+## Testing
 
-## Validation
-
-Compile every package without connecting to external services:
-
-```bash
-go test -run '^$' ./...
-go vet ./...
-```
-
-The full test suite contains integration tests that connect to local MySQL,
-etcd, and `127.0.0.1:8080`. Prepare an isolated test environment before
-running:
+Run the unit tests and static checks:
 
 ```bash
 go test ./...
+go vet ./...
 ```
 
-Some integration tests modify `max_id` in the test table. Do not run them
-against a production database.
+Run the complete suite with temporary MySQL and etcd instances:
+
+```bash
+./test/run.sh
+```
+
+The script requires `mysqld`, `mysqladmin`, `etcd`, and `etcdctl` on `PATH`. It
+creates isolated data directories, starts MySQL on `127.0.0.1:33306` and etcd on
+`127.0.0.1:32379`, runs the integration tests with the race detector, and then
+stops both processes and removes their data. It does not call `brew services` or
+configure either component to start with the machine.
+
+To use existing test instances instead, set the following variables and run the
+tagged package directly:
+
+```bash
+OPOSSUM_TEST_MYSQL_ADDR=127.0.0.1:33306 \
+OPOSSUM_TEST_MYSQL_USER=root \
+OPOSSUM_TEST_MYSQL_PASSWORD= \
+OPOSSUM_TEST_ETCD_ENDPOINT=127.0.0.1:32379 \
+go test -race -count=1 -timeout=90s -tags=integration ./test
+```
 
 ## Project Layout
 
 ```text
 client/   Go client
-proto/    Protobuf definitions and generated code
+proto/    Protocol definitions and generated code
 server/   gRPC server entry point
-service/  Segment and Snowflake Id implementations
+service/  Segment and Snowflake implementations
 storage/  MySQL and etcd storage
+test/     Unit tests integration tests and the isolated test runner
 utils/    Configuration and shared types
 ```
 

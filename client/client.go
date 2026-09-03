@@ -2,31 +2,38 @@ package client
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"time"
 
 	pb "github.com/cestlascorpion/opossum/proto"
+	"github.com/cestlascorpion/opossum/utils"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )
 
-const (
-	address = "127.0.0.1:8080"
-)
+type segment struct {
+	mutex sync.Mutex
+	next  int64
+	end   int64
+}
 
 type Client struct {
 	pb.OpossumClient
-	conn *grpc.ClientConn
+	conn     *grpc.ClientConn
+	mutex    sync.Mutex
+	segments map[string]*segment
 }
 
-func NewClient(ctx context.Context, opts ...grpc.DialOption) (*Client, error) {
-	conn, err := grpc.DialContext(ctx, address, opts...)
+func NewClient(ctx context.Context, addr string, opts ...grpc.DialOption) (*Client, error) {
+	conn, err := grpc.DialContext(ctx, addr, opts...)
 	if err != nil {
-		log.Errorf("connect fail err %+v", err)
 		return nil, err
 	}
 	return &Client{
 		OpossumClient: pb.NewOpossumClient(conn),
 		conn:          conn,
+		segments:      make(map[string]*segment),
 	}, nil
 }
 
@@ -38,32 +45,63 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) GetSegment(ctx context.Context, tag string, opts ...grpc.CallOption) (int64, error) {
-	resp, err := c.OpossumClient.GetSegment(ctx, &pb.GetSegmentIdReq{
-		Key: tag,
-	}, opts...)
-	if err != nil {
-		log.Errorf("get segment id err %+v", err)
-		return 0, err
+	c.mutex.Lock()
+	seg := c.segments[tag]
+	if seg == nil {
+		seg = &segment{}
+		c.segments[tag] = seg
 	}
-	return resp.Id, nil
+	c.mutex.Unlock()
+
+	seg.mutex.Lock()
+	defer seg.mutex.Unlock()
+	if seg.next >= seg.end {
+		resp, err := c.OpossumClient.AllocSegment(ctx, &pb.AllocSegmentReq{Key: tag}, opts...)
+		if err != nil {
+			log.Errorf("alloc segment err %+v", err)
+			return 0, err
+		}
+		if resp.Start >= resp.End {
+			return 0, errors.New(utils.ErrInvalidParameter)
+		}
+		seg.next = resp.Start
+		seg.end = resp.End
+	}
+	id := seg.next
+	seg.next++
+	return id, nil
+}
+
+func (c *Client) GetSnowflakes(ctx context.Context, count uint32, opts ...grpc.CallOption) ([]int64, error) {
+	resp, err := c.OpossumClient.GetSnowflakes(ctx, &pb.GetSnowflakesReq{Count: count}, opts...)
+	if err != nil {
+		log.Errorf("get snowflake ids err %+v", err)
+		return nil, err
+	}
+	if len(resp.Ids) != int(count) {
+		return nil, errors.New(utils.ErrInvalidParameter)
+	}
+	return resp.Ids, nil
 }
 
 func (c *Client) GetSnowflake(ctx context.Context, opts ...grpc.CallOption) (int64, error) {
-	resp, err := c.OpossumClient.GetSnowflake(ctx, &pb.GetSnowflakeIdReq{}, opts...)
+	ids, err := c.GetSnowflakes(ctx, 1, opts...)
 	if err != nil {
-		log.Errorf("get snowflake id err %+v", err)
 		return 0, err
 	}
-	return resp.Id, nil
+	return ids[0], nil
 }
 
-func (c *Client) DecodeSnowflake(ctx context.Context, id int64, opts ...grpc.CallOption) (time.Time, int64, int64, error) {
-	resp, err := c.OpossumClient.DecodeSnowflake(ctx, &pb.DecodeSnowflakeIdReq{
-		Id: id,
-	}, opts...)
-	if err != nil {
-		log.Errorf("dec snowflake id err %+v", err)
-		return time.Now(), 0, 0, err
-	}
-	return time.UnixMilli(resp.TimeStamp), resp.WorkerId, resp.SequenceId, nil
+func DecodeSnowflake(id int64) (time.Time, int64, int64) {
+	const (
+		epoch        = int64(1288834974657)
+		workerBits   = 10
+		sequenceBits = 12
+		workerMask   = int64(^(-1 << workerBits))
+		sequenceMask = int64(^(-1 << sequenceBits))
+	)
+	ts := (id >> (workerBits + sequenceBits)) + epoch
+	workerId := (id >> sequenceBits) & workerMask
+	sequence := id & sequenceMask
+	return time.UnixMilli(ts), workerId, sequence
 }

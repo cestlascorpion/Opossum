@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	pb "github.com/cestlascorpion/opossum/proto"
 	"github.com/cestlascorpion/opossum/service"
@@ -14,22 +17,22 @@ import (
 )
 
 func main() {
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(log.InfoLevel)
 
 	lis, err := net.Listen("tcp", utils.ServerAddr)
 	if err != nil {
-		log.Fatalf("listen failed err %+v", err)
+		log.Errorf("listen failed err %+v", err)
 		return
 	}
 	conf := &utils.Config{}
 	err = configor.Load(conf, "./conf.json")
 	if err != nil {
-		log.Fatalf("config failed err %+v", err)
+		log.Errorf("config failed err %+v", err)
 		return
 	}
 	svr, err := service.NewServer(context.Background(), conf)
 	if err != nil {
-		log.Fatalf("new server failed err %+v", err)
+		log.Errorf("new server failed err %+v", err)
 		return
 	}
 	defer func() {
@@ -42,10 +45,15 @@ func main() {
 	s := grpc.NewServer()
 	pb.RegisterOpossumServer(s, svr)
 	reflection.Register(s)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-ctx.Done()
+		s.GracefulStop()
+	}()
 
 	err = s.Serve(lis)
 	if err != nil {
-		log.Fatalf("serve failed err %+v", err)
-		return
+		log.Errorf("serve failed err %+v", err)
 	}
 }

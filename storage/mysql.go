@@ -30,9 +30,8 @@ func NewMySQL(ctx context.Context, conf *utils.Config) (*MySQL, error) {
 	}
 
 	query := &querySql{
-		GetAllTagsSql:   fmt.Sprintf(getAllTagsSql, table),
-		UpdateMaxIdSql:  fmt.Sprintf(updateMaxIdSql, table),
-		GetLeafAllocSql: fmt.Sprintf(getLeafAllocSql, table),
+		UpdateMaxIdSql: fmt.Sprintf(updateMaxIdSql, table),
+		GetAllocSql:    fmt.Sprintf(getAllocSql, table),
 	}
 
 	db, err := sqlx.Open("mysql", conf.MySQLSourceName())
@@ -66,22 +65,8 @@ func NewMySQL(ctx context.Context, conf *utils.Config) (*MySQL, error) {
 	}, nil
 }
 
-func (m *MySQL) GetAllTags(ctx context.Context) ([]string, error) {
-	result := make([]*utils.LeafAlloc, 0)
-
-	err := m.SelectContext(ctx, &result, m.query.GetAllTagsSql)
-	if err != nil {
-		return nil, err
-	}
-	tags := make([]string, 0, len(result))
-	for i := range result {
-		tags = append(tags, result[i].BizTag)
-	}
-	return tags, nil
-}
-
-func (m *MySQL) UpdateMaxIdAndGetLeafAlloc(ctx context.Context, tag string) (*utils.LeafAlloc, error) {
-	result := &utils.LeafAlloc{}
+func (m *MySQL) AllocSegment(ctx context.Context, tag string) (*utils.SegmentAlloc, error) {
+	result := &utils.SegmentAlloc{}
 
 	err := doTx(ctx, m, func(tx *sqlx.Tx) error {
 		res, err := tx.ExecContext(ctx, m.query.UpdateMaxIdSql, tag)
@@ -96,7 +81,7 @@ func (m *MySQL) UpdateMaxIdAndGetLeafAlloc(ctx context.Context, tag string) (*ut
 			return sql.ErrNoRows
 		}
 
-		err = tx.GetContext(ctx, result, m.query.GetLeafAllocSql, tag)
+		err = tx.GetContext(ctx, result, m.query.GetAllocSql, tag)
 		if err != nil {
 			return err
 		}
@@ -118,15 +103,13 @@ func (m *MySQL) Close(ctx context.Context) {
 // ---------------------------------------------------------------------------------------------------------------------
 
 const (
-	getAllTagsSql   = "select biz_tag from leaf_alloc_%s"
-	updateMaxIdSql  = "update leaf_alloc_%s set max_id = max_id + step where  biz_tag = ?"
-	getLeafAllocSql = "select biz_tag, max_id, step from leaf_alloc_%s where biz_tag = ?"
+	updateMaxIdSql = "update opossum_alloc_%s set max_id = max_id + step where biz_tag = ?"
+	getAllocSql    = "select biz_tag, max_id, step from opossum_alloc_%s where biz_tag = ?"
 )
 
 type querySql struct {
-	GetAllTagsSql   string
-	UpdateMaxIdSql  string
-	GetLeafAllocSql string
+	UpdateMaxIdSql string
+	GetAllocSql    string
 }
 
 func doTx(ctx context.Context, db *MySQL, fn func(tx *sqlx.Tx) error) (err error) {

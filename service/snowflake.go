@@ -13,115 +13,122 @@ import (
 
 	"github.com/cestlascorpion/opossum/storage"
 	"github.com/cestlascorpion/opossum/utils"
-	log "github.com/sirupsen/logrus"
 )
 
+type workerHolder interface {
+	GetWorkerId(context.Context) (int64, error)
+	Valid(int64) bool
+	Close(context.Context) error
+}
+
 type Snowflake struct {
-	workerId int64               // worker id
-	sequence int64               // sequence id
-	lastTs   int64               // last update timestamp
-	holder   *storage.EtcdHolder // worker id allocator
+	workerId int64
+	sequence int64
+	lastTs   int64
+	holder   workerHolder
 	mutex    sync.Mutex
 }
 
 func NewSnowflake(ctx context.Context, conf *utils.Config) (*Snowflake, error) {
-	if conf == nil || conf.Snowflake == nil {
+	if conf == nil || conf.Snowflake == nil || conf.Snowflake.Table == "" {
 		return nil, errors.New(utils.ErrInvalidParameter)
 	}
-	table := conf.Snowflake.Table
-	if len(table) == 0 {
-		return nil, errors.New(utils.ErrInvalidParameter)
-	}
-
 	ip, port, ok := checkAddress(conf)
 	if !ok {
-		log.Errorf("invalid parameter")
 		return nil, errors.New(utils.ErrInvalidParameter)
 	}
-
-	endpoints := make([]string, 0)
+	var endpoints []string
 	for _, endpoint := range strings.Split(conf.Snowflake.Endpoints, ",") {
-		endpoint = strings.TrimSpace(endpoint)
-		if endpoint != "" {
+		if endpoint = strings.TrimSpace(endpoint); endpoint != "" {
 			endpoints = append(endpoints, endpoint)
 		}
 	}
 	if len(endpoints) == 0 {
-		log.Errorf("invalid etcd endpoints")
 		return nil, errors.New(utils.ErrInvalidParameter)
 	}
 
-	path := conf.Snowflake.Table
-	if len(path) == 0 {
-		return nil, errors.New(utils.ErrInvalidParameter)
-	}
-
-	h, err := storage.NewEtcdHolder(ctx, ip, port, endpoints, path, maxWorkerId)
+	h, err := storage.NewEtcdHolder(ctx, ip, port, endpoints, conf.Snowflake.Table, maxWorkerId)
 	if err != nil {
-		log.Errorf("new etcd holer err %+v", err)
 		return nil, err
 	}
-
 	id, err := h.GetWorkerId(ctx)
 	if err != nil {
-		log.Errorf("get worker id err %+v", err)
 		_ = h.Close(ctx)
 		return nil, err
 	}
-
-	return &Snowflake{
-		workerId: id,
-		sequence: 0,
-		lastTs:   0,
-		holder:   h,
-	}, nil
+	return &Snowflake{workerId: id, holder: h}, nil
 }
 
-func (s *Snowflake) GetSnowflakeId(ctx context.Context) (int64, error) {
+func (s *Snowflake) GetSnowflakeIds(ctx context.Context, count uint32) ([]int64, error) {
+	if count == 0 || count > maxBatch {
+		return nil, errors.New(utils.ErrInvalidParameter)
+	}
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	ids := make([]int64, 0, count)
+	for i := uint32(0); i < count; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		id, err := s.next(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func (s *Snowflake) GetSnowflakeId(ctx context.Context) (int64, error) {
+	ids, err := s.GetSnowflakeIds(ctx, 1)
+	if err != nil {
+		return 0, err
+	}
+	return ids[0], nil
+}
+
+func (s *Snowflake) next(ctx context.Context) (int64, error) {
 	ts := time.Now().UnixMilli()
 	if ts < s.lastTs {
-		offset := s.lastTs - ts
-		if offset <= 5 {
-			time.Sleep(time.Duration(offset<<1) * time.Millisecond)
-			ts = time.Now().UnixMilli()
-			if ts < s.lastTs {
-				return 0, errors.New(utils.ErrInvalidClockTime)
-			}
-		} else {
+		if s.lastTs-ts > maxClockBack {
 			return 0, errors.New(utils.ErrInvalidClockTime)
 		}
+		var err error
+		ts, err = tilNextMillis(ctx, s.lastTs-1)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if !s.holder.Valid(ts) {
+		return 0, errors.New(utils.ErrWorkerLeaseExpired)
 	}
 	if s.lastTs == ts {
-		s.sequence = (s.sequence + 1) % sequenceMask
+		s.sequence = (s.sequence + 1) & sequenceMask
 		if s.sequence == 0 {
+			var err error
+			ts, err = tilNextMillis(ctx, s.lastTs)
+			if err != nil {
+				return 0, err
+			}
+			if !s.holder.Valid(ts) {
+				return 0, errors.New(utils.ErrWorkerLeaseExpired)
+			}
 			s.sequence = rand.Int63n(100)
-			ts = tilNextMillis(s.lastTs)
 		}
 	} else {
 		s.sequence = rand.Int63n(100)
 	}
 	s.lastTs = ts
-	id := ((ts - twepoch) << timestampLeftShift) | (s.workerId << workerIdShift) | s.sequence
-
-	return id, nil
-}
-
-func (s *Snowflake) DecodeSnowflakeId(ctx context.Context, id int64) (int64, int64, int64, error) {
-	ts := (id >> (sequenceBits + workerIdBits)) + twepoch
-	workerId := (id >> sequenceBits) ^ (id >> (sequenceBits + workerIdBits) << workerIdBits)
-	sequence := id ^ (id >> sequenceBits << sequenceBits)
-
-	return ts, workerId, sequence, nil
+	return ((ts - twepoch) << timestampLeftShift) | (s.workerId << workerIdShift) | s.sequence, nil
 }
 
 func (s *Snowflake) Close(ctx context.Context) error {
+	if s == nil || s.holder == nil {
+		return nil
+	}
 	return s.holder.Close(ctx)
 }
-
-// ---------------------------------------------------------------------------------------------------------------------
 
 const (
 	twepoch            = int64(1288834974657)
@@ -131,17 +138,17 @@ const (
 	workerIdShift      = sequenceBits
 	timestampLeftShift = sequenceBits + workerIdBits
 	sequenceMask       = int64(^(-1 << sequenceBits))
+	maxBatch           = uint32(4096)
+	maxClockBack       = int64(5)
 )
 
 func checkAddress(conf *utils.Config) (string, string, bool) {
-	if len(conf.Snowflake.Addr) == 0 {
+	if conf.Snowflake.Addr == "" {
 		conf.Snowflake.Addr = getHostAddress(conf.Snowflake.Ethernet)
 	}
-
-	if len(conf.Snowflake.Addr) == 0 || conf.Snowflake.Port == 0 {
+	if conf.Snowflake.Addr == "" || conf.Snowflake.Port == 0 {
 		return "", "", false
 	}
-
 	return conf.Snowflake.Addr, strconv.FormatInt(int64(conf.Snowflake.Port), 10), true
 }
 
@@ -150,21 +157,18 @@ func getHostAddress(eth string) string {
 	if err != nil {
 		return ""
 	}
-	if len(eth) != 0 {
-		if v, ok := ipList[eth]; ok {
-			return v
-		}
-	} else {
-		keys := make([]string, 0, len(ipList))
-		for key := range ipList {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			return ipList[key]
-		}
+	if eth != "" {
+		return ipList[eth]
 	}
-	return ""
+	keys := make([]string, 0, len(ipList))
+	for key := range ipList {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return ""
+	}
+	return ipList[keys[0]]
 }
 
 func getIpList() (map[string]string, error) {
@@ -173,38 +177,42 @@ func getIpList() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := range interfaces {
-		n, err := net.InterfaceByName(interfaces[i].Name)
+	for _, inf := range interfaces {
+		addrs, err := inf.Addrs()
 		if err != nil {
 			return nil, err
 		}
-		addr, err := n.Addrs()
-		if err != nil {
-			return nil, err
-		}
-		for j := range addr {
+		for _, addr := range addrs {
 			var ip net.IP
-			switch v := addr[j].(type) {
+			switch v := addr.(type) {
 			case *net.IPNet:
 				ip = v.IP
 			case *net.IPAddr:
 				ip = v.IP
 			}
-			if ip == nil || (utils.SkipIPV6 && ip.To4() == nil) {
+			if ip == nil || utils.SkipIPV6 && ip.To4() == nil {
 				continue
 			}
-			list[n.Name] = ip.String()
+			list[inf.Name] = ip.String()
 		}
 	}
 	return list, nil
 }
 
-func tilNextMillis(lastTs int64) int64 {
-	ts := time.Now().UnixMilli()
-	for ts <= lastTs {
-		ts = time.Now().UnixMilli()
+func tilNextMillis(ctx context.Context, lastTs int64) (int64, error) {
+	for {
+		ts := time.Now().UnixMilli()
+		if ts > lastTs {
+			return ts, nil
+		}
+		timer := time.NewTimer(time.Duration(lastTs-ts+1) * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return 0, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	return ts
 }
-
-// ---------------------------------------------------------------------------------------------------------------------

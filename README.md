@@ -1,6 +1,6 @@
 # Opossum
 
-[中文](README.zh-CN.md) | English
+[中文](README.zh-CN.md)
 
 > Experimental software. Opossum is a prototype for validating distributed Id
 > allocation ideas. Its API, storage layout, and behavior may change without

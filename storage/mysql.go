@@ -25,7 +25,7 @@ func NewMySQL(ctx context.Context, conf *utils.Config) (*MySQL, error) {
 		return nil, errors.New(utils.ErrInvalidParameter)
 	}
 	table := conf.Segment.Table
-	if len(table) == 0 {
+	if !validTable(table) {
 		return nil, errors.New(utils.ErrInvalidParameter)
 	}
 
@@ -39,6 +39,10 @@ func NewMySQL(ctx context.Context, conf *utils.Config) (*MySQL, error) {
 		log.Errorf("sqlx open err %+v", err)
 		return nil, err
 	}
+	if err = pingMySQL(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	x, cancel := context.WithCancel(ctx)
 	go func(ctx context.Context) {
@@ -50,7 +54,7 @@ func NewMySQL(ctx context.Context, conf *utils.Config) (*MySQL, error) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := db.PingContext(ctx); err != nil {
+				if err := pingMySQL(ctx, db); err != nil {
 					log.Warnf("check ping err %+v", err)
 				}
 			}
@@ -63,6 +67,24 @@ func NewMySQL(ctx context.Context, conf *utils.Config) (*MySQL, error) {
 		query:  query,
 		cancel: cancel,
 	}, nil
+}
+
+func validTable(table string) bool {
+	if table == "" {
+		return false
+	}
+	for _, r := range table {
+		if r != '_' && (r < '0' || r > '9') && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+func pingMySQL(ctx context.Context, db *sqlx.DB) error {
+	x, cancel := context.WithTimeout(ctx, mysqlPingTimeout)
+	defer cancel()
+	return db.PingContext(x)
 }
 
 func (m *MySQL) AllocSegment(ctx context.Context, tag string) (*utils.SegmentAlloc, error) {
@@ -103,8 +125,9 @@ func (m *MySQL) Close(ctx context.Context) {
 // ---------------------------------------------------------------------------------------------------------------------
 
 const (
-	updateMaxIdSql = "update opossum_alloc_%s set max_id = max_id + step where biz_tag = ?"
-	getAllocSql    = "select biz_tag, max_id, step from opossum_alloc_%s where biz_tag = ?"
+	mysqlPingTimeout = 10 * time.Second
+	updateMaxIdSql   = "update opossum_alloc_%s set max_id = max_id + step where biz_tag = ?"
+	getAllocSql      = "select biz_tag, max_id, step from opossum_alloc_%s where biz_tag = ?"
 )
 
 type querySql struct {

@@ -126,10 +126,7 @@ type etcdPath struct {
 }
 
 func (e *EtcdHolder) init(ctx context.Context) error {
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   e.endpoints,
-		DialTimeout: dialTimeout,
-	})
+	cli, err := newEtcd(ctx, e.endpoints)
 	if err != nil {
 		return err
 	}

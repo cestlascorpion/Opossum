@@ -87,7 +87,7 @@ etcdctl --endpoints=127.0.0.1:2379 endpoint health
 
 | 字段 | 说明 |
 | --- | --- |
-| `segment.table` | MySQL 表名后缀 |
+| `segment.table` | 仅允许字母 数字和下划线的 MySQL 表名后缀 |
 | `snowflake.table` | etcd namespace |
 | `snowflake.addr` | 记录在租约所有者信息中的地址 |
 | `snowflake.ethernet` | `addr` 为空时用于发现地址的网卡 |
@@ -96,6 +96,8 @@ etcdctl --endpoints=127.0.0.1:2379 endpoint health
 | `snowflake.mysql` | Segment 模式使用的 MySQL 连接 |
 
 地址仅作为诊断信息 不参与 workerId 分配
+
+启动时会校验 MySQL 连通性和 etcd 可用性 每个初始化检查最多等待 10 秒 避免进程无限阻塞
 
 Snowflake workerId 使用 10 位 有效范围为 `0` 到 `1023` 每个 `snowflake.table` namespace 最多支持 1024 个并发活跃 worker workerId 会在租约失效且时间围栏到期后重新分配
 

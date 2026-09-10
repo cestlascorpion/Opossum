@@ -93,7 +93,7 @@ The server reads `conf.json` from its working directory:
 
 | Field | Description |
 | --- | --- |
-| `segment.table` | MySQL table suffix |
+| `segment.table` | MySQL table suffix using only letters, digits, and underscores |
 | `snowflake.table` | etcd namespace |
 | `snowflake.addr` | Address recorded for the lease owner |
 | `snowflake.ethernet` | Interface used to discover an address when `addr` is empty |
@@ -102,6 +102,9 @@ The server reads `conf.json` from its working directory:
 | `snowflake.mysql` | MySQL connection used by segment mode |
 
 The address is diagnostic metadata and does not determine the workerId.
+
+Startup verifies MySQL connectivity and etcd availability. Each initial check
+times out after 10 seconds instead of leaving the process blocked indefinitely.
 
 Snowflake workerIds use 10 bits and range from `0` through `1023`. Each
 `snowflake.table` namespace supports up to 1024 concurrently active workers. A
